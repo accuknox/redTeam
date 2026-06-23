@@ -17,11 +17,12 @@ from typing import Any
 from plugins.base import Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase, is_basic_refusal
 from plugins.category import CategoryPlugin
 from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator
-from plugins import security, privacy, harmful, criminal, trust
+from plugins.strategies import Strategy, get_strategy, apply_strategies
+from plugins import security, privacy, harmful, criminal, trust, jailbreak, deception, code
 from plugins.security import PromptInjectionPlugin
 
 # High-level category modules, in run order.
-_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust]
+_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code]
 
 #: category key -> list of plugin ids in that category.
 CATEGORIES: dict[str, list[str]] = {}
@@ -88,6 +89,9 @@ __all__ = [
     "TestCase",
     "is_basic_refusal",
     "PromptInjectionPlugin",
+    "Strategy",
+    "get_strategy",
+    "apply_strategies",
     "CATEGORIES",
     "get_plugin",
     "resolve_plugin_ids",

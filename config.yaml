@@ -9,14 +9,15 @@
 
 # Model that authors the adversarial prompts.
 generation:
-  backend: anthropic          # anthropic | mistral | huggingface
-  model: claude-opus-4-8
-  effort: medium              # anthropic-only knob
-  api_key: asdhasdsad
+  # backend: anthropic          # anthropic | mistral | huggingface
+  # model: claude-opus-4-8
+  # effort: medium              # anthropic-only knob
+  # api_key: asdhasdsad
   # For Mistral instead, use e.g.:
-  # backend: mistral
-  # model: mistral-large-latest
-  # temperature: 0.7
+  backend: mistral
+  model: ministral-8b-2410
+  temperature: 0.7
+  api_key: abcd
   # For a local Hugging Face model instead, use e.g.:
   # backend: huggingface
   # model: meta-llama/Llama-3.1-8B-Instruct
@@ -25,16 +26,21 @@ generation:
 
 # Model that grades the target's responses.
 grading:
-  backend: anthropic
-  model: claude-opus-4-8
-  effort: low
+  # backend: anthropic
+  # model: claude-opus-4-8
+  # effort: low
+  # To use your local gated evaluator instead:
+  backend: local
+  url: http://0.0.0.0:47923
+  model: redteam-evaluator-gated
+  # api_key: your-key-here   # omit if no auth required
 
 # The system under test.
 target:
   purpose: "A customer-support assistant for an online bookstore."
 
 # How many adversarial prompts each plugin should generate.
-num_generations: 5
+num_generations: 1
 
 # Which plugins to run. Each entry is either a plugin id or a category key
 # (a category expands to all of its sub-plugins).
@@ -52,6 +58,43 @@ plugins:
   # - security            # or an entire category (all 5 sub-plugins)
   # - harmful
   # Static dataset plugin — loads prompts from a file instead of generating.
+  # Supported formats: .csv, .json, .jsonl, .txt (one prompt per line).
+#  # - dataset: datasets/harmbench.csv   # path to the dataset file
+#  #   column: prompt                    # column/key containing the prompt text
+#  #   detector: prompt-injection        # which grader to route results to
+#  #   id: harmbench                     # optional label (default: "dataset")
+#  #   sample: true                      # random sample if file > num_generations
+
+# Attack strategies — applied to every generated prompt after plugin generation.
+# Each strategy produces one extra TestCase per original attack.
+#
+# No-LLM strategies (fast, no extra API calls):
+#   base64, rot13, leetspeak
+#   fiction, citation, refusal-suppression, manyshot, crescendo
+#
+# LLM-based strategies (use the generation model, cost extra API calls):
+#   jailbreak, multilingual
+#
+# With config options:
+#   - id: multilingual
+#     config:
+#       language: es   # zh | es | fr | de | ar | ru | ja | pt | ko | hi
+#   - id: manyshot
+#     config:
+#       num_shots: 15
+strategies:
+  # - base64
+  # - rot13
+  # - leetspeak
+  # - fiction
+  # - citation
+  # - refusal-suppression
+  # - manyshot
+  # - crescendo
+  - jailbreak
+  # - id: multilingual
+  #   config:
+  #     language: zh
 #  # Supported formats: .csv, .json, .jsonl, .txt (one prompt per line).
 #  # - dataset: datasets/harmbench.csv   # path to the dataset file
 #  #   column: prompt                    # column/key containing the prompt text

@@ -5,9 +5,10 @@ prompts for a range of vulnerability classes, runs them against a target system,
 and grades the responses.
 
 The architecture takes inspiration from
-[promptfoo's red-team design](https://www.promptfoo.dev/docs/red-team/architecture/),
-but is strict Python and library-shaped (plain functions and classes) rather
-than a CLI/UI — the intent is to build production playbooks on top of it.
+[promptfoo's red-team design](https://www.promptfoo.dev/docs/red-team/architecture/)
+and [Garak](https://github.com/leondz/garak), but is strict Python and
+library-shaped (plain functions and classes) rather than a CLI/UI — the intent
+is to build production playbooks on top of it.
 
 ---
 
@@ -18,9 +19,9 @@ a prompt that instructs a generation model to *write* attacks tailored to the
 target's purpose. So generation is LLM-driven:
 
 ```
-config.yaml ──▶ load_config() ──▶ plugin.generate_tests() ──▶ [TestCase, ...] ──▶ target ──▶ detector
-                build generator,     render meta-prompt          adversarial      system     grade the
-                resolve plugins,     → call gen model            prompts          under test  response
+config.yaml ──▶ load_config() ──▶ plugin.generate_tests() ──▶ strategies ──▶ target ──▶ detector
+                build generator,     render meta-prompt          transform    system     grade the
+                resolve plugins,     → call gen model            each case    under test  response
                 build plugins        → parse / filter / dedup
 ```
 
@@ -34,13 +35,14 @@ parsing, and dedup are identical across all plugins.
 
 ```
 .
-├── config.yaml              # declarative run config (models, purpose, count, plugins)
+├── config.yaml              # declarative run config (models, purpose, count, plugins, strategies)
 ├── config.py                # loads config.yaml and wires the components
 ├── run.py                   # config-driven entry point
 ├── example.py               # fully offline, end-to-end demo (scripted backends)
+├── test_func.py             # check_api_key() — a callable target for run.py
 ├── requirements.txt
 │
-├── inference/               # THE TARGET (system under test) — only target logic
+├── inference/               # THE TARGET (system under test)
 │   ├── provider.py          #   Provider (ABC) + ScriptedProvider
 │   └── __init__.py
 │
@@ -48,22 +50,29 @@ parsing, and dedup are identical across all plugins.
 │   ├── base.py              #   Generator (ABC), RedteamPlugin (ABC), TestCase, the gen loop
 │   ├── generators.py        #   generation backends: Anthropic, Mistral, HuggingFace
 │   ├── category.py          #   CategoryPlugin — shared meta-prompt for sub-plugins
-│   ├── security.py          #   category module: Security & Access Control  (5 plugins)
-│   ├── privacy.py           #   category module: Privacy & PII              (5 plugins)
-│   ├── harmful.py           #   category module: Harmful Content            (5 plugins)
-│   ├── criminal.py          #   category module: Illegal & Dangerous        (5 plugins)
-│   ├── trust.py             #   category module: Trust, Brand & Misuse      (5 plugins)
+│   ├── strategies.py        #   attack strategies — prompt transforms applied after generation
+│   ├── security.py          #   category: Security & Access Control  (5 plugins)
+│   ├── privacy.py           #   category: Privacy & PII              (5 plugins)
+│   ├── harmful.py           #   category: Harmful Content            (5 plugins)
+│   ├── criminal.py          #   category: Illegal & Dangerous        (5 plugins)
+│   ├── trust.py             #   category: Trust, Brand & Misuse      (5 plugins)
+│   ├── jailbreak.py         #   category: Jailbreak Techniques       (5 plugins)
+│   ├── deception.py         #   category: Deception & Misinformation (5 plugins)
+│   ├── code.py              #   category: Malicious Code & Supply Chain (5 plugins)
 │   └── __init__.py          #   plugin registry, CATEGORIES, get_plugin/resolve_plugin_ids
 │
 └── detectors/               # GRADING — judging the target's response (mirrors plugins/)
     ├── base.py              #   Detector (ABC), LLMDetector (LLM-as-a-judge), GraderResult
-    ├── judge.py             #   evaluator models: Judge (ABC) + Anthropic/Mistral/HuggingFace
+    ├── judge.py             #   evaluator models: Anthropic, Mistral, HuggingFace, Local
     ├── category.py          #   CategoryDetector — shared rubric for sub-detectors
     ├── security.py          #   5 evaluators (one per security plugin)
     ├── privacy.py           #   5 evaluators (one per privacy plugin)
     ├── harmful.py           #   5 evaluators (one per harmful plugin)
     ├── criminal.py          #   5 evaluators (one per criminal plugin)
     ├── trust.py             #   5 evaluators (one per trust plugin)
+    ├── jailbreak.py         #   5 evaluators (one per jailbreak plugin)
+    ├── deception.py         #   5 evaluators (one per deception plugin)
+    ├── code.py              #   5 evaluators (one per code plugin)
     └── __init__.py          #   detector + judge registry, get_detector
 ```
 
@@ -71,141 +80,205 @@ parsing, and dedup are identical across all plugins.
 
 ## Architecture
 
-Four layers, each a separate responsibility. Nothing imports a concrete backend
-directly — every layer depends on an abstract base, so generators, targets, and
-graders are swappable.
+Five layers, each a separate responsibility. Nothing imports a concrete backend
+directly — every layer depends on an abstract base.
 
 ### 1. `inference/` — the target
 
-`Provider` is the system under test. It's a template-method base: shared logic
-(coercing a prompt to messages, applying the system prompt) lives in the base;
-a concrete backend implements one `_complete()` hook. This package contains
-**only** target logic — generation lives in `plugins/`.
+`Provider` is the system under test. A concrete backend implements one
+`_complete(messages) -> str` hook. `ScriptedProvider` replays canned responses
+offline. Custom targets subclass `Provider` and talk to any API.
+
+`test_func.check_api_key()` is a lightweight callable target that hits Mistral's
+API and returns the assistant's text — compatible with the `run.py` pipeline
+without needing a full `Provider` subclass.
 
 ### 2. `plugins/` — generation
 
 Owns the generation pipeline end to end.
 
-- **`Generator`** (`plugins/base.py`) — the generation-model abstraction. Backends
-  in `plugins/generators.py`:
+- **`Generator`** — the generation-model abstraction. Backends in `generators.py`:
   - `AnthropicGenerator` — Anthropic SDK (default `claude-opus-4-8`)
   - `MistralGenerator` — Mistral SDK (default `mistral-large-latest`)
-  - `HuggingFaceGenerator` — a local model loaded from the Hugging Face Hub
-  - `ScriptedGenerator` — canned output for offline runs/tests
+  - `HuggingFaceGenerator` — local model from the Hugging Face Hub
+  - `ScriptedGenerator` — canned output for offline runs
 
-  Heavy deps (`anthropic`, `mistralai`, `transformers`, `torch`) are imported
-  lazily, so you only pay for the backend you instantiate.
+- **`RedteamPlugin`** — the plugin base. `generate_tests()` runs the loop: render
+  meta-prompt → call generator → parse `Prompt:` lines → drop refusals/duplicates
+  → build `TestCase`s, retrying until `num_tests` unique prompts exist.
 
-- **`RedteamPlugin`** (`plugins/base.py`) — the plugin base. Concrete plugins set
-  `id`/`detector_id` and implement `get_template()`. `generate_tests()` runs the
-  loop: render meta-prompt → call the generator → parse `Prompt:` lines → drop
-  refusals/duplicates → build `TestCase`s, retrying until `num_tests` unique
-  prompts exist.
-
-- **`TestCase`** — one generated prompt plus the wiring to grade it
+- **`TestCase`** — one generated prompt plus routing metadata
   (`prompt`, `plugin_id`, `detector_id`, `metadata`).
 
-### 3. `detectors/` — grading (evaluator)
+### 3. `plugins/strategies.py` — attack strategies
 
-`Detector` holds a rubric and judges whether the target's response means the
-attack succeeded. `LLMDetector` is the LLM-as-a-judge implementation: it builds a
-rubric and calls a **`Judge`** (the evaluator-model abstraction in
-`detectors/judge.py`) to score the response.
+Strategies transform generated prompts to probe whether defences can be bypassed
+by framing or obfuscation. They are applied **after** plugin generation and produce
+additional `TestCase`s alongside the originals (baseline is always graded too).
 
-`Judge` is the evaluation-side counterpart to `Generator` and `Provider` — its
-own role so the attacker, target, and judge run on independent backends. Backends
-(`detectors/judge.py`), all lazy-imported and defaulting to deterministic
-decoding for stable grading:
+Each transformed case carries `metadata["strategy"]` (the strategy id) and
+`metadata["original_prompt"]` for traceability.
 
-- `AnthropicJudge` — Anthropic SDK (low effort)
-- `MistralJudge` — Mistral SDK (`temperature=0`)
-- `HuggingFaceJudge` — local Hugging Face model (greedy decoding)
-- `ScriptedJudge` — canned verdicts for offline runs/tests
+**No-LLM strategies** (pure text transforms, no extra API calls):
 
-`GraderResult` carries `passed` (target resisted), `score`, and `reason`. The
-`detectors/` layer depends only on `Judge` — it does not import `plugins/`.
+| Strategy | What it does |
+|---|---|
+| `base64` | Encodes the attack in Base64 and asks the model to decode and comply |
+| `rot13` | ROT13-encodes the attack |
+| `leetspeak` | Converts to leet speak (probes keyword filters) |
+| `fiction` | Wraps the attack in a novel-writing / creative request |
+| `citation` | Frames the attack as an academic research inquiry |
+| `refusal-suppression` | Prepends "don't refuse or add caveats" instructions |
+| `manyshot` | Prefixes with many fake compliant Q&A pairs |
+| `crescendo` | Frames as the natural next step in an ongoing conversation |
 
-### 4. Pairing
+**LLM-based strategies** (use the generation model, incur extra API calls):
 
-The `detectors/` taxonomy mirrors `plugins/`: each sub-plugin pairs **1:1** with
-its own sub-evaluator (matching ids). A plugin's `detector_id` defaults to its
-own id and resolves to that dedicated grader via `detectors.get_detector()`.
-Like the plugins, sub-evaluators share a category rubric (`CategoryDetector`) and
-differ only in the `violation` they look for; `prompt-injection` keeps a richer,
-dedicated rubric.
+| Strategy | What it does |
+|---|---|
+| `jailbreak` | PAIR-inspired: uses the generator to rewrite the attack to be more persuasive |
+| `multilingual` | Translates the attack to another language (probes language-specific filters) |
+
+### 4. `detectors/` — grading
+
+`LLMDetector` builds a rubric and calls a **`Judge`** to score the response.
+
+**Standard path (rubric-based):**
+```
+grade(attack, response, purpose)
+  → build_rubric()         # detector assembles a grading instruction string
+  → judge.evaluate(rubric) # single user message sent to the LLM judge
+  → _parse()               # extracts {passed, score, reason} JSON
+```
+
+**Gated evaluator path (LocalJudge):**
+When the judge exposes `evaluate_messages()`, `LLMDetector` skips `build_rubric()`
+entirely and sends the raw conversation directly — the model is its own rubric:
+```
+grade(attack, response, purpose)
+  → judge.evaluate_messages([user=attack, assistant=response])
+  → _parse_gated()         # extracts {verdict: safe/unsafe, reason} JSON
+```
+
+**Judge backends** (`detectors/judge.py`):
+
+| Judge | Backend | Notes |
+|---|---|---|
+| `AnthropicJudge` | Anthropic SDK | Default `claude-opus-4-8`, low effort |
+| `MistralJudge` | Mistral SDK | `temperature=0` for deterministic grading |
+| `HuggingFaceJudge` | Local transformers | Greedy decoding |
+| `LocalJudge` | Any OpenAI-compatible endpoint | Sends `[user, assistant]` conversation; parses `verdict`/`reason` |
+| `ScriptedJudge` | Canned verdicts | Offline tests |
+
+`GraderResult` carries `passed` (target resisted), `score`, and `reason`.
+
+### 5. Pairing
+
+`detectors/` mirrors `plugins/` exactly — each sub-plugin pairs **1:1** with its
+own sub-evaluator (matching ids). A plugin's `detector_id` resolves to that
+evaluator via `detectors.get_detector()`.
 
 ---
 
 ## Plugin taxonomy
 
-High-level **category modules**, each with **5 specific sub-plugins**
-(25 plugins total). A category shares one grader.
+**8 categories, 5 sub-plugins each — 40 plugins total.**
 
-Each category has a plugin module (`plugins/<cat>.py`) and a matching evaluator
-module (`detectors/<cat>.py`) with one sub-evaluator per sub-plugin.
+| Category | Sub-plugins |
+|---|---|
+| `security` | `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `shell-injection` |
+| `privacy` | `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak` |
+| `harmful` | `harmful:hate`, `harmful:self-harm`, `harmful:harassment-bullying`, `harmful:graphic-content`, `harmful:sexual-content` |
+| `criminal` | `harmful:cybercrime`, `harmful:illegal-drugs`, `harmful:indiscriminate-weapons`, `harmful:violent-crime`, `harmful:non-violent-crime` |
+| `trust` | `hallucination`, `excessive-agency`, `overreliance`, `contracts`, `competitors` |
+| `jailbreak` | `dan`, `continuation`, `roleplay`, `hypothetical`, `grandma` |
+| `deception` | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting` |
+| `code` | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
 
-| Category   | Plugin module        | Evaluator module       | Sub-plugins (each with a 1:1 evaluator) |
-|------------|----------------------|------------------------|-----------------------------------------|
-| `security` | `plugins/security.py` | `detectors/security.py` | `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `shell-injection` |
-| `privacy`  | `plugins/privacy.py`  | `detectors/privacy.py`  | `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak` |
-| `harmful`  | `plugins/harmful.py`  | `detectors/harmful.py`  | `harmful:hate`, `harmful:self-harm`, `harmful:harassment-bullying`, `harmful:graphic-content`, `harmful:sexual-content` |
-| `criminal` | `plugins/criminal.py` | `detectors/criminal.py` | `harmful:cybercrime`, `harmful:illegal-drugs`, `harmful:indiscriminate-weapons`, `harmful:violent-crime`, `harmful:non-violent-crime` |
-| `trust`    | `plugins/trust.py`    | `detectors/trust.py`    | `hallucination`, `excessive-agency`, `overreliance`, `contracts`, `competitors` |
-
-A category plugin module defines a thin `<Category>Plugin(CategoryPlugin)` base
-(fixing the category label); each sub-plugin then collapses to an `id` plus a
-one-line `objective`. `CategoryPlugin` turns that objective into a tailored
-meta-prompt. The evaluator side mirrors this exactly: a `<Category>Detector`
-base + sub-detectors that set `id` + a one-line `violation`. `prompt-injection`
-is the exception on both sides — a richer, dedicated template and rubric.
+A `plugins:` entry in config may be a plugin id (`prompt-injection`) or a
+category key (`security`) which expands to all 5 sub-plugins in that category.
 
 ---
 
 ## Configuration
 
-`config.yaml` is the single source of run settings; `config.py` distributes each
-value to the component that needs it.
+`config.yaml` is the single source of run settings.
 
 ```yaml
-generation:                 # model that AUTHORS attacks  -> plugins/generators.py
-  backend: anthropic        #   anthropic | mistral | huggingface
-  model: claude-opus-4-8
-  effort: medium
+# Model that AUTHORS attacks
+generation:
+  backend: mistral          # anthropic | mistral | huggingface
+  model: ministral-8b-2410
+  temperature: 0.7
+  api_key: YOUR_KEY
 
-grading:                    # evaluator (LLM-as-a-judge) -> detectors/judge.py
-  backend: anthropic        #   anthropic | mistral | huggingface
+# Model that GRADES responses
+grading:
+  backend: anthropic        # anthropic | mistral | huggingface | local
   model: claude-opus-4-8
   effort: low
+  # For a self-hosted gated evaluator (OpenAI-compatible endpoint):
+  # backend: local
+  # url: http://100.92.159.5:47923
+  # model: redteam-evaluator-gated
 
 target:
   purpose: "A customer-support assistant for an online bookstore."
 
 num_generations: 5          # attacks per plugin
 
-plugins:                    # plugin ids and/or category keys (a category = its 5 plugins)
+# Plugin ids and/or category keys (a category key expands to all 5 sub-plugins)
+plugins:
   - prompt-injection
   # - security
-  # - harmful
-```
+  # - jailbreak
+  # - code
 
-`backend:` selects the generator class; every other key passes through to it.
-A `plugins:` entry may be a plugin id or a category key (expanded to all 5).
+# Attack strategies — each produces one extra TestCase per original attack
+strategies:
+  # - base64
+  # - rot13
+  # - leetspeak
+  # - fiction
+  # - citation
+  # - refusal-suppression
+  # - manyshot
+  # - crescendo
+  # - jailbreak
+  # - id: multilingual
+  #   config:
+  #     language: zh    # zh | es | fr | de | ar | ru | ja | pt | ko | hi
+  # - id: manyshot
+  #   config:
+  #     num_shots: 15
+
+# Static dataset plugin (optional) — loads prompts from a file
+# plugins:
+#   - dataset: datasets/harmbench.csv
+#     column: prompt
+#     detector: prompt-injection
+#     id: harmbench
+#     sample: true
+```
 
 ---
 
 ## Running
 
 ```bash
-pip install -r requirements.txt        # transformers/torch only needed for HuggingFaceGenerator
+pip install -r requirements.txt    # transformers/torch only needed for HuggingFaceGenerator
 
-python example.py                      # offline, end-to-end demo (no API key)
-python run.py [path/to/config.yaml]    # config-driven run
+python example.py                  # offline end-to-end demo — no API key needed
+python run.py                      # config-driven run using config.yaml
+python run.py path/to/config.yaml  # custom config path
 ```
 
-`example.py` uses scripted backends, so the full generation → attack → grade
-flow runs with no API key or token spend. `run.py` reads `config.yaml`, builds
-the configured plugins, generates the adversarial prompts, and shows the grading
-wiring (a target `Provider` plugs in where marked).
+`example.py` uses scripted backends so the full generation → attack → grade
+flow runs with no API key or token spend.
+
+`run.py` reads `config.yaml`, generates the adversarial prompts, applies any
+configured strategies, calls the target via `check_api_key()` in `test_func.py`,
+and grades each response with the configured judge.
 
 ---
 
@@ -213,13 +286,16 @@ wiring (a target `Provider` plugs in where marked).
 
 - **New generation backend** — subclass `plugins.Generator`, implement
   `complete(prompt) -> str`, add a branch in `config.build_generator`.
-- **New evaluator (judge) backend** — subclass `detectors.Judge`, implement
-  `evaluate(prompt) -> str`, add a branch in `config.build_judge`.
-- **New target backend** — subclass `inference.Provider`, implement
-  `_complete(messages) -> str`.
-- **New plugin** — add a sub-plugin to a `plugins/<cat>.py` module (set `id` +
-  `objective`) and a matching sub-evaluator to `detectors/<cat>.py` (same `id` +
-  a `violation`); both are picked up by their registries automatically.
-- **New category** — add `plugins/<category>.py` (exposing `CATEGORY` +
-  `PLUGINS`) and `detectors/<category>.py` (exposing `CATEGORY` + `DETECTORS`),
-  then register each module in its package `__init__.py`.
+- **New evaluator backend** — subclass `detectors.Judge`, implement
+  `evaluate(prompt) -> str` (and optionally `evaluate_messages(msgs) -> str`
+  for gated/conversational evaluators), add a branch in `config.build_judge`.
+- **New target** — subclass `inference.Provider`, implement `_complete(messages) -> str`.
+  Or pass any callable `f(prompt) -> str` directly in `run.py`.
+- **New strategy** — subclass `plugins.strategies.Strategy`, implement
+  `apply(prompt, *, purpose, generator) -> str`, register in `strategies._REGISTRY`.
+- **New plugin** — add a sub-plugin to `plugins/<cat>.py` (set `id` + `objective`)
+  and a matching sub-evaluator to `detectors/<cat>.py` (same `id` + `violation`);
+  both are auto-registered.
+- **New category** — add `plugins/<category>.py` (expose `CATEGORY` + `PLUGINS`)
+  and `detectors/<category>.py` (expose `CATEGORY` + `DETECTORS`), then add each
+  module to `_CATEGORY_MODULES` in its package `__init__.py`.

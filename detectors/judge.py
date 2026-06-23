@@ -9,10 +9,16 @@ attacker, the target, and the judge can run on independent backends.
 Judging benefits from deterministic, low-variance output, so the provided
 backends default to low effort / low temperature / greedy decoding.
 
-Backends provided: Anthropic and Mistral (hosted SDKs) and Hugging Face (local).
+Backends provided:
+  * AnthropicJudge   — hosted, via Anthropic SDK
+  * MistralJudge     — hosted, via Mistral SDK
+  * HuggingFaceJudge — local, via transformers
+  * LocalJudge       — any OpenAI-compatible /v1/chat/completions endpoint
+                       (e.g. a self-hosted gated evaluator)
+
 Heavy dependencies (`anthropic`, `mistralai`, `transformers`, `torch`) are
 imported lazily, so importing this module never requires them — you only pay for
-the backend you instantiate.
+the backend you instantiate. `LocalJudge` only requires `requests`.
 """
 
 from __future__ import annotations
@@ -140,6 +146,81 @@ class MistralJudge(Judge):
         if isinstance(content, list):
             content = "".join(getattr(chunk, "text", "") or "" for chunk in content)
         return (content or "").strip()
+
+
+class LocalJudge(Judge):
+    """LLM-as-a-judge via any OpenAI-compatible /v1/chat/completions endpoint.
+
+    Designed for self-hosted gated evaluators (e.g. `redteam-evaluator-gated`)
+    that receive a conversation and return a JSON verdict.
+
+    Two call modes:
+      * `evaluate(prompt)`          — sends a single user message (standard
+                                      rubric-based path, for compatibility).
+      * `evaluate_messages(msgs)`   — sends the messages list as-is. When
+                                      `LLMDetector` detects this method it skips
+                                      `build_rubric()` and passes the raw
+                                      [user=attack, assistant=response] pair
+                                      directly to the evaluator.
+
+    Config example::
+
+        grading:
+          backend: local
+          url: http://100.92.159.5:47923
+          model: redteam-evaluator-gated
+          # api_key: sk-...   # omit if the endpoint has no auth
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        *,
+        api_key: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+        timeout: int = 30,
+        **params: Any,
+    ) -> None:
+        self.name = model
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.params = params
+
+    def _call(self, messages: list[dict]) -> str:
+        import requests
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            **self.params,
+        }
+        resp = requests.post(
+            f"{self.base_url}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def evaluate(self, prompt: str) -> str:
+        return self._call([{"role": "user", "content": prompt}])
+
+    def evaluate_messages(self, messages: list[dict]) -> str:
+        """Send a pre-built message list directly to the evaluator."""
+        return self._call(messages)
 
 
 class HuggingFaceJudge(Judge):
