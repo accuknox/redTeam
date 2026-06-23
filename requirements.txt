@@ -1,6 +1,7 @@
 # Core
 jinja2>=3.1.6          # meta-prompt templating in the plugin layer
 pyyaml>=6.0            # config.yaml loading
+requests>=2.31.0       # LocalJudge — OpenAI-compatible local evaluator
 
 # SDK-based generation backends
 anthropic>=0.109.2     # AnthropicGenerator — claude-opus-4-8 and friends

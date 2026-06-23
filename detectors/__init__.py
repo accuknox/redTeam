@@ -17,11 +17,12 @@ from detectors.judge import (
     AnthropicJudge,
     MistralJudge,
     HuggingFaceJudge,
+    LocalJudge,
 )
-from detectors import security, privacy, harmful, criminal, trust
+from detectors import security, privacy, harmful, criminal, trust, jailbreak, deception, code
 
 # High-level category detector modules, parallel to the plugin categories.
-_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust]
+_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code]
 
 #: category key -> list of detector ids (== plugin ids) in that category.
 DETECTOR_CATEGORIES: dict[str, list[str]] = {}
@@ -63,6 +64,7 @@ __all__ = [
     "AnthropicJudge",
     "MistralJudge",
     "HuggingFaceJudge",
+    "LocalJudge",
     "DETECTOR_CATEGORIES",
     "get_detector",
     "all_detector_ids",

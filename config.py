@@ -28,13 +28,16 @@ from plugins import (
     HuggingFaceGenerator,
     MistralGenerator,
     RedteamPlugin,
+    Strategy,
     get_plugin,
+    get_strategy,
     resolve_plugin_ids,
 )
 from detectors import (
     AnthropicJudge,
     HuggingFaceJudge,
     Judge,
+    LocalJudge,
     MistralJudge,
 )
 
@@ -76,8 +79,11 @@ def build_judge(spec: dict[str, Any]) -> Judge:
         return MistralJudge(model, **spec)
     if backend == "huggingface":
         return HuggingFaceJudge(model, **spec)
+    if backend == "local":
+        url = spec.pop("url")
+        return LocalJudge(base_url=url, model=model, **spec)
     raise ValueError(
-        f"unknown judge backend {backend!r} (expected anthropic | mistral | huggingface)"
+        f"unknown judge backend {backend!r} (expected anthropic | mistral | huggingface | local)"
     )
 
 
@@ -91,6 +97,7 @@ class RedTeamConfig:
     generation: Generator
     grading: Judge
     plugins: list[RedteamPlugin]
+    strategies: list[Strategy]
     raw: dict[str, Any]
 
 
@@ -128,6 +135,10 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 sample=entry.get("sample", True),
             ))
 
+    strategies: list[Strategy] = [
+        get_strategy(s) for s in data.get("strategies", [])
+    ]
+
     return RedTeamConfig(
         purpose=purpose,
         num_generations=num_generations,
@@ -135,5 +146,6 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         generation=generation,
         grading=grading,
         plugins=plugins,
+        strategies=strategies,
         raw=data,
     )
