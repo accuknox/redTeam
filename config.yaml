@@ -12,6 +12,7 @@ generation:
   backend: anthropic          # anthropic | mistral | huggingface
   model: claude-opus-4-8
   effort: medium              # anthropic-only knob
+  api_key: asdhasdsad
   # For Mistral instead, use e.g.:
   # backend: mistral
   # model: mistral-large-latest
@@ -50,3 +51,10 @@ plugins:
   - prompt-injection      # a single plugin by id
   # - security            # or an entire category (all 5 sub-plugins)
   # - harmful
+  # Static dataset plugin — loads prompts from a file instead of generating.
+#  # Supported formats: .csv, .json, .jsonl, .txt (one prompt per line).
+#  # - dataset: datasets/harmbench.csv   # path to the dataset file
+#  #   column: prompt                    # column/key containing the prompt text
+#  #   detector: prompt-injection        # which grader to route results to
+#  #   id: harmbench                     # optional label (default: "dataset")
+#  #   sample: true                      # random sample if file > num_generations (default: true)
