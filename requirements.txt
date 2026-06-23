@@ -1,0 +1,12 @@
+# Core
+jinja2>=3.1.6          # meta-prompt templating in the plugin layer
+pyyaml>=6.0            # config.yaml loading
+
+# SDK-based generation backends
+anthropic>=0.109.2     # AnthropicGenerator — claude-opus-4-8 and friends
+mistralai>=1.0.0       # MistralGenerator — mistral-large-latest and friends
+
+# Local Hugging Face generation (HuggingFaceGenerator) — optional, heavy.
+# Imported lazily, so only needed if you instantiate HuggingFaceGenerator.
+transformers>=4.40.0
+torch>=2.2.0

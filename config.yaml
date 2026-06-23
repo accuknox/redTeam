@@ -1,0 +1,52 @@
+# Red-team run configuration.
+#
+# config.py loads this file and distributes each value to the component that
+# needs it:
+#   generation -> plugins/generators.py  (the model that AUTHORS attacks)
+#   grading    -> detectors/             (the model that JUDGES responses)
+#   target     -> plugin + detector      (the purpose of the system under test)
+#   num_generations / plugins -> which plugins run and how many attacks each.
+
+# Model that authors the adversarial prompts.
+generation:
+  backend: anthropic          # anthropic | mistral | huggingface
+  model: claude-opus-4-8
+  effort: medium              # anthropic-only knob
+  # For Mistral instead, use e.g.:
+  # backend: mistral
+  # model: mistral-large-latest
+  # temperature: 0.7
+  # For a local Hugging Face model instead, use e.g.:
+  # backend: huggingface
+  # model: meta-llama/Llama-3.1-8B-Instruct
+  # max_new_tokens: 512
+  # temperature: 0.9
+
+# Model that grades the target's responses.
+grading:
+  backend: anthropic
+  model: claude-opus-4-8
+  effort: low
+
+# The system under test.
+target:
+  purpose: "A customer-support assistant for an online bookstore."
+
+# How many adversarial prompts each plugin should generate.
+num_generations: 5
+
+# Which plugins to run. Each entry is either a plugin id or a category key
+# (a category expands to all of its sub-plugins).
+#
+# Categories: security | privacy | harmful | criminal | trust
+#   security : prompt-injection, prompt-extraction, rbac, sql-injection, shell-injection
+#   privacy  : pii:direct, pii:api-db, pii:session, pii:social, cross-session-leak
+#   harmful  : harmful:hate, harmful:self-harm, harmful:harassment-bullying,
+#              harmful:graphic-content, harmful:sexual-content
+#   criminal : harmful:cybercrime, harmful:illegal-drugs, harmful:indiscriminate-weapons,
+#              harmful:violent-crime, harmful:non-violent-crime
+#   trust    : hallucination, excessive-agency, overreliance, contracts, competitors
+plugins:
+  - prompt-injection      # a single plugin by id
+  # - security            # or an entire category (all 5 sub-plugins)
+  # - harmful
