@@ -38,6 +38,18 @@ grading:
 # The system under test.
 target:
   purpose: "A customer-support assistant for an online bookstore."
+  # How to invoke the target. Two backends:
+  #
+  # REST — any OpenAI-compatible endpoint:
+  #   backend: rest
+  #   url: http://my-api:8080
+  #   model: my-model          # sent in the request body
+  #   api_key: sk-...          # optional Bearer token
+  #
+  # Module — a Python file with  def invoke(prompt: str) -> str:
+  #   backend: module
+  #   module: my_target.py
+  #
 
 # How many adversarial prompts each plugin should generate.
 num_generations: 1
@@ -83,7 +95,7 @@ plugins:
 #     config:
 #       num_shots: 15
 strategies:
-  # - base64
+  - base64
   # - rot13
   # - leetspeak
   # - fiction

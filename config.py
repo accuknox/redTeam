@@ -28,11 +28,10 @@ from plugins import (
     HuggingFaceGenerator,
     MistralGenerator,
     RedteamPlugin,
-    Strategy,
     get_plugin,
-    get_strategy,
     resolve_plugin_ids,
 )
+from strategies import Strategy, get_strategy
 from detectors import (
     AnthropicJudge,
     HuggingFaceJudge,
@@ -40,6 +39,7 @@ from detectors import (
     LocalJudge,
     MistralJudge,
 )
+from inference import CallableProvider, Provider, RestProvider
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 
@@ -61,6 +61,29 @@ def build_generator(spec: dict[str, Any]) -> Generator:
         return HuggingFaceGenerator(model, **spec)
     raise ValueError(
         f"unknown generator backend {backend!r} (expected anthropic | mistral | huggingface)"
+    )
+
+
+def build_target(spec: dict[str, Any]) -> Provider:
+    """Build a target provider from a config block.
+
+    ``backend: rest``   — any OpenAI-compatible REST endpoint.
+    ``backend: module`` — a Python file that defines ``invoke(prompt) -> str``.
+    """
+    spec = dict(spec)
+    spec.pop("purpose", None)  # purpose lives on the config, not the provider
+    backend = spec.pop("backend", None)
+    if backend is None:
+        return None  # type: ignore[return-value]  — caller checks for None
+    if backend == "rest":
+        url = spec.pop("url")
+        model = spec.pop("model", "")
+        return RestProvider(base_url=url, model=model, **spec)
+    if backend == "module":
+        module_path = spec.pop("module")
+        return CallableProvider.from_module_path(module_path)
+    raise ValueError(
+        f"unknown target backend {backend!r} (expected rest | module)"
     )
 
 
@@ -99,6 +122,7 @@ class RedTeamConfig:
     plugins: list[RedteamPlugin]
     strategies: list[Strategy]
     raw: dict[str, Any]
+    target: Provider | None = None
 
 
 def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
@@ -139,6 +163,9 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         get_strategy(s) for s in data.get("strategies", [])
     ]
 
+    target_spec = data.get("target", {})
+    target = build_target(target_spec) if target_spec.get("backend") else None
+
     return RedTeamConfig(
         purpose=purpose,
         num_generations=num_generations,
@@ -148,4 +175,5 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         plugins=plugins,
         strategies=strategies,
         raw=data,
+        target=target,
     )
