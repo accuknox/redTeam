@@ -17,7 +17,6 @@ from typing import Any
 from plugins.base import Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase, is_basic_refusal
 from plugins.category import CategoryPlugin
 from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator
-from plugins.strategies import Strategy, get_strategy, apply_strategies
 from plugins import security, privacy, harmful, criminal, trust, jailbreak, deception, code
 from plugins.security import PromptInjectionPlugin
 
@@ -89,9 +88,6 @@ __all__ = [
     "TestCase",
     "is_basic_refusal",
     "PromptInjectionPlugin",
-    "Strategy",
-    "get_strategy",
-    "apply_strategies",
     "CATEGORIES",
     "get_plugin",
     "resolve_plugin_ids",

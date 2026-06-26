@@ -1,36 +1,56 @@
 """Config-driven red-team run.
 
-Reads `config.yaml`, builds the configured plugins (each wired with the
-generation model + target purpose + generation count), generates the adversarial
-test cases, and grades them with the configured grading model.
+Reads `config.yaml`, generates adversarial test cases, attacks the target, and
+grades each response. Results are written to a JSONL file (one JSON object per
+case) and a summary is appended at the end.
 
-    python run.py [path/to/config.yaml]
+    python run.py [config.yaml] [output.jsonl]
 
-A target system under test plugs in where noted below — any `inference.Provider`
-subclass. Until one is configured, this prints the generated attacks and the
-grader wiring it would use.
+Defaults: config.yaml in the same directory, results_<timestamp>.jsonl as output.
 """
 
 from __future__ import annotations
 
+import json
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
 
 from config import load_config
 from detectors import get_detector
-from plugins import apply_strategies
+from strategies import apply_strategies
 
 
 def _generate_for_plugin(plugin):
-    """Run a single plugin's generation (used as a thread-pool task)."""
     cases = plugin.generate_tests()
     return plugin, cases
 
 
-def main(config_path: str | None = None) -> None:
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def main(config_path: str | None = None, output_path: str | None = None) -> None:
     cfg = load_config(config_path) if config_path else load_config()
 
-    print(f"Target purpose : {cfg.purpose}")
+    run_id = str(uuid.uuid4())
+    out_file = Path(output_path) if output_path else Path(
+        f"results_{datetime.now().strftime('%Y%m%dT%H%M%S')}.jsonl"
+    )
+
+    if cfg.target is not None:
+        target = cfg.target
+    else:
+        raise RuntimeError(
+            "no target configured — add a 'target: backend:' block to config.yaml"
+        )
+
+    print(f"Run ID          : {run_id}")
+    print(f"Output          : {out_file}")
+    print(f"Target          : {target.name}")
+    print(f"Target purpose  : {cfg.purpose}")
     print(f"Generation model: {cfg.generation.name}")
     print(f"Grading model   : {cfg.grading.name}")
     print(f"Generations/plugin: {cfg.num_generations}")
@@ -39,7 +59,7 @@ def main(config_path: str | None = None) -> None:
         print(f"Strategies      : {', '.join(s.id for s in cfg.strategies)}")
     print()
 
-    # --- Generate attacks (plugins run in parallel) ----------------------------
+    # --- Generate attacks -------------------------------------------------------
     all_results: list[tuple] = []
 
     if cfg.concurrency <= 1:
@@ -53,43 +73,105 @@ def main(config_path: str | None = None) -> None:
             for future in as_completed(futures):
                 all_results.append(future.result())
 
-    for plugin, test_cases in all_results:
-        augmented = (
-            apply_strategies(test_cases, cfg.strategies, cfg.generation)
-            if cfg.strategies
-            else test_cases
-        )
+    # --- Attack, grade, and write results ---------------------------------------
+    total = 0
+    vulnerable = 0
+    by_plugin: dict[str, dict] = {}
 
-        strategy_note = (
-            f", {len(augmented) - len(test_cases)} strategy-augmented"
-            if cfg.strategies
-            else ""
-        )
-        print(f"=== plugin: {plugin.id} ===")
-        print(f"generated {len(test_cases)} base attack(s){strategy_note}, {len(augmented)} total\n")
+    with out_file.open("w", encoding="utf-8") as f:
 
-        for i, case in enumerate(augmented, 1):
-            strategy_tag = f"[{case.metadata['strategy']}] " if "strategy" in case.metadata else ""
-            print(f"[{i}] {strategy_tag}{case.prompt}")
+        for plugin, test_cases in all_results:
+            augmented = (
+                apply_strategies(test_cases, cfg.strategies, cfg.generation)
+                if cfg.strategies
+                else test_cases
+            )
 
-            from test_func import check_api_key
-            response = check_api_key(case.prompt)
-            detector = get_detector(case.detector_id, cfg.grading)
-            result = detector.grade(attack=case.prompt, response=response,
-                                    purpose=cfg.purpose)
-            print(" final verdict  ", "RESISTED" if result.passed else "VULNERABLE", result.reason)
+            strategy_note = (
+                f", {len(augmented) - len(test_cases)} strategy-augmented"
+                if cfg.strategies else ""
+            )
+            print(f"=== plugin: {plugin.id} ===")
+            print(f"generated {len(test_cases)} base attack(s){strategy_note}, {len(augmented)} total\n")
 
-            # --- Attack the target -------------------------------------------------
-            # Plug an inference.Provider in here, e.g.:
-            #     response = target.generate(case.prompt, system=cfg.purpose)
-            # then grade it with the configured grading model:
-            #     detector = get_detector(case.detector_id, cfg.grading)
-            #     result = detector.grade(attack=case.prompt, response=response,
-            #                             purpose=cfg.purpose)
-            #     print("   ", "RESISTED" if result.passed else "VULNERABLE", result.reason)
+            by_plugin[plugin.id] = {"total": 0, "vulnerable": 0}
 
-        print()
+            for i, case in enumerate(augmented, 1):
+                strategy = case.metadata.get("strategy")
+                strategy_tag = f"[{strategy}] " if strategy else ""
+                print(f"[{i}] {strategy_tag}{case.prompt}")
+
+                response = target.generate(case.prompt)
+                detector = get_detector(case.detector_id, cfg.grading)
+                result = detector.grade(
+                    attack=case.prompt, response=response, purpose=cfg.purpose
+                )
+
+                verdict = "RESISTED" if result.passed else "VULNERABLE"
+                print(f"     {verdict}  {result.reason}\n")
+
+                # --- write JSONL record ----------------------------------------
+                record = {
+                    "run_id":           run_id,
+                    "timestamp":        _now(),
+                    "plugin_id":        case.plugin_id,
+                    "detector_id":      case.detector_id,
+                    "strategy":         strategy,
+                    "attack":           case.prompt,
+                    "original_prompt":  case.metadata.get("original_prompt"),
+                    "response":         response,
+                    "passed":           result.passed,
+                    "score":            result.score,
+                    "reason":           result.reason,
+                    "purpose":          cfg.purpose,
+                    "generation_model": cfg.generation.name,
+                    "grading_model":    cfg.grading.name,
+                }
+                f.write(json.dumps(record) + "\n")
+
+                total += 1
+                by_plugin[plugin.id]["total"] += 1
+                if not result.passed:
+                    vulnerable += 1
+                    by_plugin[plugin.id]["vulnerable"] += 1
+
+            print()
+
+        # --- write summary record -----------------------------------------------
+        for pid, counts in by_plugin.items():
+            t = counts["total"]
+            counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
+
+        summary = {
+            "run_id":       run_id,
+            "type":         "summary",
+            "timestamp":    _now(),
+            "total":        total,
+            "vulnerable":   vulnerable,
+            "resisted":     total - vulnerable,
+            "pass_rate":    round((total - vulnerable) / total, 3) if total else 0.0,
+            "by_plugin":    by_plugin,
+        }
+        f.write(json.dumps(summary) + "\n")
+
+    # --- print summary ----------------------------------------------------------
+    print("=" * 50)
+    print(f"Total cases  : {total}")
+    print(f"Vulnerable   : {vulnerable}")
+    print(f"Resisted     : {total - vulnerable}")
+    print(f"Pass rate    : {summary['pass_rate']:.0%}")
+    print()
+    print("By plugin:")
+    for pid, counts in by_plugin.items():
+        print(f"  {pid}: {counts['vulnerable']}/{counts['total']} vulnerable "
+              f"({1 - counts['pass_rate']:.0%})")
+    print()
+    print(f"Results written to {out_file}")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else None)
+    args = sys.argv[1:]
+    main(
+        config_path=args[0] if len(args) > 0 else None,
+        output_path=args[1] if len(args) > 1 else None,
+    )

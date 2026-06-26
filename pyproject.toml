@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knox-rt"
+version = "0.1.0"
+description = "Knox Red Team — LLM adversarial testing toolkit by AccuKnox"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jinja2>=3.1.6",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+anthropic    = ["anthropic>=0.109.2"]
+mistral      = ["mistralai>=1.0.0"]
+huggingface  = ["transformers>=4.40.0", "torch>=2.2.0"]
+all          = ["anthropic>=0.109.2", "mistralai>=1.0.0"]
+
+[project.scripts]
+knox-rt = "cli:main"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["plugins*", "detectors*", "strategies*", "inference*"]
+
+[tool.setuptools]
+py-modules = ["cli", "run", "config"]
