@@ -1,14 +1,10 @@
-# LLM Red Teaming
+# knox-rt — Knox Red Team
 
-A Python module for red-teaming LLM applications. It generates adversarial test
-prompts for a range of vulnerability classes, runs them against a target system,
-and grades the responses.
+**LLM adversarial testing toolkit by [AccuKnox](https://www.accuknox.com).**
 
-The architecture takes inspiration from
-[promptfoo's red-team design](https://www.promptfoo.dev/docs/red-team/architecture/)
-and [Garak](https://github.com/leondz/garak), but is strict Python and
-library-shaped (plain functions and classes) rather than a CLI/UI — the intent
-is to build production playbooks on top of it.
+Generates adversarial test prompts for a range of vulnerability classes, runs
+them against a target system, and grades the responses with an LLM-as-a-judge.
+
 
 ---
 
@@ -230,27 +226,27 @@ num_generations: 5          # attacks per plugin
 # Plugin ids and/or category keys (a category key expands to all 5 sub-plugins)
 plugins:
   - prompt-injection
-  # - security
-  # - jailbreak
-  # - code
+  - security
+  - jailbreak
+  - code
 
 # Attack strategies — each produces one extra TestCase per original attack
 strategies:
-  # - base64
-  # - rot13
-  # - leetspeak
-  # - fiction
-  # - citation
-  # - refusal-suppression
-  # - manyshot
-  # - crescendo
-  # - jailbreak
-  # - id: multilingual
-  #   config:
-  #     language: zh    # zh | es | fr | de | ar | ru | ja | pt | ko | hi
-  # - id: manyshot
-  #   config:
-  #     num_shots: 15
+  - base64
+  - rot13
+  - leetspeak
+  - fiction
+  - citation
+  - refusal-suppression
+  - manyshot
+  - crescendo
+  - jailbreak
+  - id: multilingual
+    config:
+      language: zh    # zh | es | fr | de | ar | ru | ja | pt | ko | hi
+  - id: manyshot
+    config:
+      num_shots: 15
 
 # Static dataset plugin (optional) — loads prompts from a file
 # plugins:
@@ -265,20 +261,39 @@ strategies:
 
 ## Running
 
+**Install (recommended):**
 ```bash
-pip install -r requirements.txt    # transformers/torch only needed for HuggingFaceGenerator
-
-python example.py                  # offline end-to-end demo — no API key needed
-python run.py                      # config-driven run using config.yaml
-python run.py path/to/config.yaml  # custom config path
+pip install -e ".[anthropic,mistral]"   # installs knox-rt as a CLI command
+knox-rt --help
 ```
 
-`example.py` uses scripted backends so the full generation → attack → grade
-flow runs with no API key or token spend.
+**Or run directly without installing:**
+```bash
+pip install -r requirements.txt
+python cli.py --help
+```
 
-`run.py` reads `config.yaml`, generates the adversarial prompts, applies any
-configured strategies, calls the target via `check_api_key()` in `test_func.py`,
-and grades each response with the configured judge.
+**CLI usageknox:**
+```bash
+# Discovery
+knox-rt --list-plugins
+knox-rt --list-strategies
+
+# Run
+knox-rt --plugins prompt-injection
+knox-rt --plugins jailbreak,code --strategies base64,fiction -n 3
+knox-rt --plugins security -o results.json
+knox-rt --config custom.yaml --format jsonl
+
+# Override target purpose inline
+knox-rt --plugins dan --purpose "A banking chatbot" -n 5
+```
+
+**Programmatic use (library):**
+```bash
+python example.py     # offline demo — scripted backends, no API key needed
+python run.py         # config-driven run using config.yaml
+```
 
 ---
 
