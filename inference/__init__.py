@@ -12,4 +12,10 @@ from inference.provider import (
     ScriptedProvider,
 )
 
-__all__ = ["Provider", "RestProvider", "CallableProvider", "ScriptedProvider", "Message"]
+__all__ = [
+    "Provider",
+    "RestProvider",
+    "CallableProvider",
+    "ScriptedProvider",
+    "Message",
+]

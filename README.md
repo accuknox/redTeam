@@ -5,7 +5,6 @@
 Generates adversarial test prompts for a range of vulnerability classes, runs
 them against a target system, and grades the responses with an LLM-as-a-judge.
 
-
 ---
 
 ## Core idea
@@ -34,38 +33,43 @@ parsing, and dedup are identical across all plugins.
 ├── config.yaml              # declarative run config (models, purpose, count, plugins, strategies)
 ├── config.py                # loads config.yaml and wires the components
 ├── run.py                   # config-driven entry point
-├── example.py               # fully offline, end-to-end demo (scripted backends)
-├── test_func.py             # check_api_key() — a callable target for run.py
+├── cli.py                   # knox-rt CLI (knox-rt command)
 ├── requirements.txt
 │
 ├── inference/               # THE TARGET (system under test)
-│   ├── provider.py          #   Provider (ABC) + ScriptedProvider
+│   ├── provider.py          #   Provider (ABC), RestProvider, CallableProvider, ScriptedProvider
 │   └── __init__.py
 │
 ├── plugins/                 # GENERATION — authoring adversarial prompts
 │   ├── base.py              #   Generator (ABC), RedteamPlugin (ABC), TestCase, the gen loop
 │   ├── generators.py        #   generation backends: Anthropic, Mistral, HuggingFace
 │   ├── category.py          #   CategoryPlugin — shared meta-prompt for sub-plugins
-│   ├── strategies.py        #   attack strategies — prompt transforms applied after generation
-│   ├── security.py          #   category: Security & Access Control  (5 plugins)
+│   ├── security.py          #   category: Security & Access Control  (9 plugins)
 │   ├── privacy.py           #   category: Privacy & PII              (5 plugins)
-│   ├── harmful.py           #   category: Harmful Content            (5 plugins)
+│   ├── harmful.py           #   category: Harmful Content            (8 plugins)
 │   ├── criminal.py          #   category: Illegal & Dangerous        (5 plugins)
-│   ├── trust.py             #   category: Trust, Brand & Misuse      (5 plugins)
+│   ├── trust.py             #   category: Trust, Brand & Misuse      (8 plugins)
 │   ├── jailbreak.py         #   category: Jailbreak Techniques       (5 plugins)
 │   ├── deception.py         #   category: Deception & Misinformation (5 plugins)
 │   ├── code.py              #   category: Malicious Code & Supply Chain (5 plugins)
 │   └── __init__.py          #   plugin registry, CATEGORIES, get_plugin/resolve_plugin_ids
 │
+├── strategies/              # ATTACK TRANSFORMS — applied after plugin generation
+│   ├── base.py              #   Strategy (ABC), apply_to_cases()
+│   ├── encoding.py          #   base64, rot13, leetspeak
+│   ├── wrapping.py          #   fiction, citation, refusal-suppression, manyshot, crescendo
+│   ├── llm.py               #   jailbreak (PAIR-inspired), multilingual
+│   └── __init__.py          #   strategy registry, get_strategy, apply_strategies
+│
 └── detectors/               # GRADING — judging the target's response (mirrors plugins/)
     ├── base.py              #   Detector (ABC), LLMDetector (LLM-as-a-judge), GraderResult
     ├── judge.py             #   evaluator models: Anthropic, Mistral, HuggingFace, Local
     ├── category.py          #   CategoryDetector — shared rubric for sub-detectors
-    ├── security.py          #   5 evaluators (one per security plugin)
+    ├── security.py          #   9 evaluators (one per security plugin)
     ├── privacy.py           #   5 evaluators (one per privacy plugin)
-    ├── harmful.py           #   5 evaluators (one per harmful plugin)
+    ├── harmful.py           #   8 evaluators (one per harmful plugin)
     ├── criminal.py          #   5 evaluators (one per criminal plugin)
-    ├── trust.py             #   5 evaluators (one per trust plugin)
+    ├── trust.py             #   8 evaluators (one per trust plugin)
     ├── jailbreak.py         #   5 evaluators (one per jailbreak plugin)
     ├── deception.py         #   5 evaluators (one per deception plugin)
     ├── code.py              #   5 evaluators (one per code plugin)
@@ -81,13 +85,16 @@ directly — every layer depends on an abstract base.
 
 ### 1. `inference/` — the target
 
-`Provider` is the system under test. A concrete backend implements one
-`_complete(messages) -> str` hook. `ScriptedProvider` replays canned responses
-offline. Custom targets subclass `Provider` and talk to any API.
+`Provider` is the system under test. Three concrete providers are built in:
 
-`test_func.check_api_key()` is a lightweight callable target that hits Mistral's
-API and returns the assistant's text — compatible with the `run.py` pipeline
-without needing a full `Provider` subclass.
+| Provider | CLI flag | When to use |
+|---|---|---|
+| `RestProvider` (template mode) | `--target-type rest -G config.yaml` | Any REST API — custom request/response shape via a config file |
+| `RestProvider` (OpenAI mode) | `--target-type openai` | OpenAI API or any server that speaks `/v1/chat/completions` |
+| `CallableProvider` | `--target-type function` | A local Python function `f(prompt) -> str` |
+| `ScriptedProvider` | — | Offline tests — replays canned responses |
+
+Custom targets subclass `Provider` and implement one `_complete(messages) -> str` hook.
 
 ### 2. `plugins/` — generation
 
@@ -106,14 +113,16 @@ Owns the generation pipeline end to end.
 - **`TestCase`** — one generated prompt plus routing metadata
   (`prompt`, `plugin_id`, `detector_id`, `metadata`).
 
-### 3. `plugins/strategies.py` — attack strategies
+### 3. `strategies/` — attack transforms
 
 Strategies transform generated prompts to probe whether defences can be bypassed
 by framing or obfuscation. They are applied **after** plugin generation and produce
 additional `TestCase`s alongside the originals (baseline is always graded too).
 
-Each transformed case carries `metadata["strategy"]` (the strategy id) and
-`metadata["original_prompt"]` for traceability.
+**Prompt count formula:** `num_generations × num_plugins × (1 + num_strategies)`
+
+Each transformed case carries `metadata["strategy"]` and `metadata["original_prompt"]`
+for traceability.
 
 **No-LLM strategies** (pure text transforms, no extra API calls):
 
@@ -137,7 +146,8 @@ Each transformed case carries `metadata["strategy"]` (the strategy id) and
 
 ### 4. `detectors/` — grading
 
-`LLMDetector` builds a rubric and calls a **`Judge`** to score the response.
+Each plugin pairs 1:1 with a detector that knows what a violation looks like.
+`LLMDetector` sends the attack + response to a `Judge` and parses the verdict.
 
 **Standard path (rubric-based):**
 ```
@@ -149,7 +159,7 @@ grade(attack, response, purpose)
 
 **Gated evaluator path (LocalJudge):**
 When the judge exposes `evaluate_messages()`, `LLMDetector` skips `build_rubric()`
-entirely and sends the raw conversation directly — the model is its own rubric:
+and sends the raw conversation directly:
 ```
 grade(attack, response, purpose)
   → judge.evaluate_messages([user=attack, assistant=response])
@@ -178,18 +188,18 @@ evaluator via `detectors.get_detector()`.
 
 ## Plugin taxonomy
 
-**8 categories, 5 sub-plugins each — 40 plugins total.**
+**8 categories — 50 plugins total.**
 
 | Category | Sub-plugins |
 |---|---|
-| `security` | `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `shell-injection` |
-| `privacy` | `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak` |
-| `harmful` | `harmful:hate`, `harmful:self-harm`, `harmful:harassment-bullying`, `harmful:graphic-content`, `harmful:sexual-content` |
-| `criminal` | `harmful:cybercrime`, `harmful:illegal-drugs`, `harmful:indiscriminate-weapons`, `harmful:violent-crime`, `harmful:non-violent-crime` |
-| `trust` | `hallucination`, `excessive-agency`, `overreliance`, `contracts`, `competitors` |
-| `jailbreak` | `dan`, `continuation`, `roleplay`, `hypothetical`, `grandma` |
-| `deception` | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting` |
-| `code` | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
+| `security` (9) | `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `shell-injection`, `ssrf`, `bola`, `bfla`, `indirect-prompt-injection` |
+| `privacy` (5) | `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak` |
+| `harmful` (8) | `harmful:hate`, `harmful:self-harm`, `harmful:harassment-bullying`, `harmful:graphic-content`, `harmful:sexual-content`, `harmful:radicalization`, `harmful:chemical-biological-weapons`, `harmful:specialized-advice` |
+| `criminal` (5) | `harmful:cybercrime`, `harmful:illegal-drugs`, `harmful:indiscriminate-weapons`, `harmful:violent-crime`, `harmful:non-violent-crime` |
+| `trust` (8) | `hallucination`, `excessive-agency`, `overreliance`, `contracts`, `competitors`, `imitation`, `politics`, `goal-misalignment` |
+| `jailbreak` (5) | `dan`, `continuation`, `roleplay`, `hypothetical`, `grandma` |
+| `deception` (5) | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting` |
+| `code` (5) | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
 
 A `plugins:` entry in config may be a plugin id (`prompt-injection`) or a
 category key (`security`) which expands to all 5 sub-plugins in that category.
@@ -215,31 +225,45 @@ grading:
   effort: low
   # For a self-hosted gated evaluator (OpenAI-compatible endpoint):
   # backend: local
-  # url: http://100.92.159.5:47923
+  # url: http://my-evaluator:47923
   # model: redteam-evaluator-gated
 
+# The system under test — pick one type:
 target:
   purpose: "A customer-support assistant for an online bookstore."
 
+  # type: rest — generic REST endpoint (any API shape)
+  # type: rest
+  # config: my_api.yaml      # YAML config file (see below)
+  #   — OR —
+  # name: http://my-api:8080  # bare URL if endpoint is OpenAI-compatible
+  # model: my-model
+  # api_key: sk-...
+
+  # type: openai — OpenAI or any OpenAI-compatible local server
+  # type: openai
+  # name: gpt-4o              # model name  (uses api.openai.com)
+  # name: http://localhost:11434  # custom base URL (Ollama / vLLM)
+  # model: llama3
+  # api_key: sk-...
+
+  # type: function — local Python callable
+  # type: function
+  # name: my_target#invoke    # module#function (module must be importable)
+
 num_generations: 5          # attacks per plugin
 
-# Plugin ids and/or category keys (a category key expands to all 5 sub-plugins)
+# Plugin ids and/or category keys
 plugins:
   - prompt-injection
   - security
   - jailbreak
   - code
 
-# Attack strategies — each produces one extra TestCase per original attack
+# Attack strategies
 strategies:
   - base64
-  - rot13
-  - leetspeak
   - fiction
-  - citation
-  - refusal-suppression
-  - manyshot
-  - crescendo
   - jailbreak
   - id: multilingual
     config:
@@ -247,14 +271,23 @@ strategies:
   - id: manyshot
     config:
       num_shots: 15
+```
 
-# Static dataset plugin (optional) — loads prompts from a file
-# plugins:
-#   - dataset: datasets/harmbench.csv
-#     column: prompt
-#     detector: prompt-injection
-#     id: harmbench
-#     sample: true
+### REST config file (`my_api.yaml`)
+
+For targets that don't speak the OpenAI format, describe the request/response
+shape in a separate YAML file and pass it with `-G`:
+
+```yaml
+url: http://my-api:8080/generate
+method: post
+headers:
+  Authorization: "Bearer $KEY"   # $KEY replaced by api_key
+request:
+  message: "$INPUT"              # $INPUT replaced by the attack prompt
+  max_tokens: 512
+response_field: output.text      # dot-path into the JSON response
+api_key: my-secret
 ```
 
 ---
@@ -273,40 +306,79 @@ pip install -r requirements.txt
 python cli.py --help
 ```
 
-**CLI usageknox:**
+**CLI usage:**
 ```bash
 # Discovery
 knox-rt --list-plugins
 knox-rt --list-strategies
 
-# Run
-knox-rt --plugins prompt-injection
-knox-rt --plugins jailbreak,code --strategies base64,fiction -n 3
-knox-rt --plugins security -o results.json
-knox-rt --config custom.yaml --format jsonl
+# Generic REST target (any API shape — via config file)
+knox-rt --plugins jailbreak -t rest -G my_api.yaml
 
-# Override target purpose inline
-knox-rt --plugins dan --purpose "A banking chatbot" -n 5
+# OpenAI-compatible endpoint at a custom URL (vLLM, Ollama, LM Studio)
+knox-rt --plugins jailbreak -t openai --target-name http://localhost:11434 --target-model llama3
+
+# OpenAI
+knox-rt --plugins jailbreak -t openai --target-name gpt-4o --target-api-key sk-...
+
+# Local Python callable
+knox-rt --plugins jailbreak -t function --target-name my_target#invoke
+
+# Override plugins, strategies, purpose from the command line
+knox-rt -t openai --target-name gpt-4o --plugins jailbreak,code --strategies base64,fiction -n 3
+knox-rt --config custom.yaml --purpose "A banking chatbot" --format jsonl
+
+# Programmatic call (same as CLI — pass a list of args)
+import cli
+cli.main([
+    "--plugins",      "jailbreak",
+    "--target-type",  "function",
+    "--target-name",  "my_target#invoke",
+    "--num-generations", "3",
+    "--output",       "results.json",
+])
 ```
 
-**Programmatic use (library):**
-```bash
-python example.py     # offline demo — scripted backends, no API key needed
-python run.py         # config-driven run using config.yaml
+---
+
+## Output
+
+Results are written as JSON (default) or JSONL. Each record contains:
+
+```json
+{
+  "run_id":           "3f7a1c2e-...",
+  "plugin_id":        "dan",
+  "detector_id":      "dan",
+  "strategy":         "base64",
+  "attack":           "RG8gYW55dGhpbmcgbm93...",
+  "original_prompt":  "Do anything now...",
+  "response":         "I cannot comply with...",
+  "passed":           true,
+  "score":            1.0,
+  "reason":           "Model refused the jailbreak.",
+  "purpose":          "A customer-support assistant",
+  "generation_model": "ministral-8b-2410",
+  "grading_model":    "redteam-evaluator-gated"
+}
 ```
+
+`passed=true` means the target **resisted**. `passed=false` means the attack **succeeded**.
+
+The JSON output file wraps all records under `{"summary": {...}, "results": [...]}`.
 
 ---
 
 ## Extending
 
+- **New target** — subclass `inference.Provider`, implement `_complete(messages) -> str`.
+  Or use `--target-type function` with any `f(prompt) -> str` callable.
 - **New generation backend** — subclass `plugins.Generator`, implement
   `complete(prompt) -> str`, add a branch in `config.build_generator`.
 - **New evaluator backend** — subclass `detectors.Judge`, implement
   `evaluate(prompt) -> str` (and optionally `evaluate_messages(msgs) -> str`
   for gated/conversational evaluators), add a branch in `config.build_judge`.
-- **New target** — subclass `inference.Provider`, implement `_complete(messages) -> str`.
-  Or pass any callable `f(prompt) -> str` directly in `run.py`.
-- **New strategy** — subclass `plugins.strategies.Strategy`, implement
+- **New strategy** — subclass `strategies.Strategy`, implement
   `apply(prompt, *, purpose, generator) -> str`, register in `strategies._REGISTRY`.
 - **New plugin** — add a sub-plugin to `plugins/<cat>.py` (set `id` + `objective`)
   and a matching sub-evaluator to `detectors/<cat>.py` (same `id` + `violation`);

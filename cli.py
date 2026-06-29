@@ -90,23 +90,35 @@ examples:
 
     tgt = p.add_argument_group("target (system under test)")
     tgt.add_argument(
-        "--target-url", default=None, metavar="URL",
-        help="OpenAI-compatible REST endpoint to attack "
-             "(e.g. http://my-api/v1/chat/completions — sets target backend: rest)",
+        "--target-type", "-t", default=None,
+        choices=["rest", "openai", "function"],
+        metavar="TYPE",
+        help="target backend type: rest | openai | function",
+    )
+    tgt.add_argument(
+        "--target-name", default=None, metavar="NAME",
+        help=(
+            "target identifier — meaning depends on --target-type:  "
+            "rest→base URL (http://my-api:8080),  "
+            "openai→model name (gpt-4o),  "
+            "function→module#fn (test_func#check_api_key)"
+        ),
     )
     tgt.add_argument(
         "--target-model", default=None, metavar="MODEL",
-        help="model name to send in the REST request body (used with --target-url)",
+        help="model name sent in the REST request body (rest type only)",
     )
     tgt.add_argument(
         "--target-api-key", default=None, metavar="KEY",
-        help="Bearer token for the REST target (used with --target-url)",
+        help="Bearer token for the target (rest / openai types)",
     )
     tgt.add_argument(
-        "--target-module", default=None, metavar="MODULE#FUNC",
-        help="callable target as  module#function  (Garak convention) — "
-             "e.g. test_func#check_api_key  or  test_func.py#check_api_key. "
-             "Omit #function to use 'invoke' as the default function name.",
+        "--target-config", "-G", default=None, metavar="FILE",
+        help=(
+            "YAML/JSON config file for a generic REST target — "
+            "sets url, request template ($INPUT placeholder), response_field, headers. "
+            "Used with --target-type rest."
+        ),
     )
 
     out = p.add_argument_group("output")
@@ -205,21 +217,46 @@ def main(argv: list[str] | None = None) -> None:
         ]
 
     # --- resolve target -------------------------------------------------------
-    # Priority: CLI flags > config.yaml target block > test_func fallback
-    if args.target_module:
-        target = CallableProvider.from_module_spec(args.target_module)
-    elif args.target_url:
+    # Priority: CLI --target-type > config.yaml target block > error
+    tt = args.target_type
+    tn = args.target_name
+    if tt == "function":
+        if not tn:
+            parser.error("--target-type function requires --target-name module#function")
+        target = CallableProvider.from_module_spec(tn)
+    elif tt == "rest":
+        if args.target_config:
+            # Generic REST — load url, template, response_field from a config file (-G)
+            target = RestProvider.from_config_file(
+                args.target_config, api_key=args.target_api_key
+            )
+        elif tn:
+            # Bare URL — no template, caller's API must be OpenAI-compatible
+            target = RestProvider(
+                base_url=tn,
+                model=args.target_model or "",
+                api_key=args.target_api_key,
+            )
+        else:
+            parser.error(
+                "--target-type rest requires either --target-name <url> "
+                "or --target-config <file>"
+            )
+    elif tt == "openai":
+        # OpenAI-compatible: --target-name is the base URL (defaults to api.openai.com)
+        base = tn if (tn and tn.startswith("http")) else "https://api.openai.com"
+        model = tn if (tn and not tn.startswith("http")) else (args.target_model or "")
         target = RestProvider(
-            base_url=args.target_url,
-            model=args.target_model or "",
+            base_url=base,
+            model=model,
             api_key=args.target_api_key,
         )
     elif cfg.target is not None:
         target = cfg.target
     else:
         parser.error(
-            "no target configured — use --target-url, --target-module, "
-            "or add a 'target: backend:' block to config.yaml"
+            "no target configured — use --target-type rest|openai|function "
+            "or add a 'target: type:' block to config.yaml"
         )
 
     # --- output path ----------------------------------------------------------

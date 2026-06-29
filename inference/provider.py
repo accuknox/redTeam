@@ -116,10 +116,19 @@ class ScriptedProvider(Provider):
 
 
 class RestProvider(Provider):
-    """Target that calls any OpenAI-compatible REST endpoint.
+    """Generic REST target.
 
-    Equivalent to Garak's ``--model_type rest`` / promptfoo's ``http:`` provider.
-    Point it at any server that speaks ``POST /v1/chat/completions``.
+    Two modes selected by whether ``req_template`` is provided:
+
+    **Template mode** (``type: rest``) — any API shape:
+        Supply a ``req_template`` dict whose values may contain ``$INPUT``
+        (replaced with the prompt) and ``$KEY`` (replaced with ``api_key``).
+        Supply ``response_field`` as dot-notation to extract the reply
+        (e.g. ``"output.text"`` or ``"choices.0.message.content"``).
+
+    **OpenAI mode** (``type: openai``) — no template needed:
+        Sends the standard ``POST /v1/chat/completions`` payload and reads
+        ``choices[0].message.content``.
     """
 
     def __init__(
@@ -128,41 +137,130 @@ class RestProvider(Provider):
         model: str = "",
         *,
         api_key: str | None = None,
+        req_template: "dict | None" = None,
+        response_field: str | None = None,
+        method: str = "post",
+        extra_headers: "dict | None" = None,
         system: str | None = None,
         max_tokens: int = 2048,
         temperature: float = 0.0,
         timeout: int = 60,
         **params: Any,
     ) -> None:
-        super().__init__(model=model or "rest-target", system=system, max_tokens=max_tokens)
+        super().__init__(model=model or base_url, system=system, max_tokens=max_tokens)
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.req_template = req_template
+        self.response_field = response_field
+        self.method = method.lower()
+        self.extra_headers: dict[str, str] = dict(extra_headers or {})
         self.temperature = temperature
         self.timeout = timeout
         self.params.update(params)
         self.name = model or base_url
 
-    def _complete(self, messages: list[Message]) -> str:
-        import requests  # kept lazy — not a hard dependency for offline use
+    # ---- helpers -------------------------------------------------------------
 
+    def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self.api_key:
+        for k, v in self.extra_headers.items():
+            headers[k] = v.replace("$KEY", self.api_key or "")
+        if self.api_key and "Authorization" not in headers:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            **{k: v for k, v in self.params.items() if k not in ("model", "messages")},
-        }
-        resp = requests.post(
-            f"{self.base_url}/v1/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=self.timeout,
-        )
+        return headers
+
+    @staticmethod
+    def _fill(obj: Any, prompt: str) -> Any:
+        """Recursively replace ``$INPUT`` in a template dict/string."""
+        if isinstance(obj, str):
+            return obj.replace("$INPUT", prompt)
+        if isinstance(obj, dict):
+            return {k: RestProvider._fill(v, prompt) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [RestProvider._fill(v, prompt) for v in obj]
+        return obj
+
+    @staticmethod
+    def _extract(data: Any, field: str) -> str:
+        """Pull a value from a JSON response using dot-notation.
+
+        ``"output.text"``              → ``data["output"]["text"]``
+        ``"choices.0.message.content"``→ ``data["choices"][0]["message"]["content"]``
+        """
+        for part in field.split("."):
+            data = data[int(part)] if isinstance(data, list) else data[part]
+        return str(data)
+
+    # ---- core ----------------------------------------------------------------
+
+    def _complete(self, messages: list[Message]) -> str:
+        import requests  # lazy — not a hard dep for offline use
+
+        headers = self._build_headers()
+
+        if self.req_template is not None:
+            # Template mode — extract the last user message and fill $INPUT
+            prompt = next(
+                (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
+            )
+            body = self._fill(self.req_template, prompt)
+            url = self.base_url  # full endpoint URL supplied by the user
+        else:
+            # OpenAI-compatible mode
+            body = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                **{k: v for k, v in self.params.items()
+                   if k not in ("model", "messages")},
+            }
+            url = f"{self.base_url}/v1/chat/completions"
+
+        http_fn = getattr(requests, self.method)
+        resp = http_fn(url, json=body, headers=headers, timeout=self.timeout)
         resp.raise_for_status()
+
+        if self.response_field:
+            return self._extract(resp.json(), self.response_field)
         return resp.json()["choices"][0]["message"]["content"]
+
+    @classmethod
+    def from_config_file(cls, path: "str | Path", *, api_key: str | None = None) -> "RestProvider":
+        """Load a RestProvider from a YAML/JSON generator config file.
+
+        Config file format::
+
+            url: http://my-api:8080/generate
+            method: post            # optional, default: post
+            model: my-model         # optional
+            api_key: sk-...         # optional — override with --target-api-key
+            headers:
+              Authorization: "Bearer $KEY"
+            request:
+              message: "$INPUT"
+              max_tokens: 512
+            response_field: output.text
+        """
+        import json as _json
+
+        p = Path(path)
+        text = p.read_text(encoding="utf-8")
+        if p.suffix in (".yaml", ".yml"):
+            import yaml as _yaml
+            spec: dict[str, Any] = _yaml.safe_load(text)
+        else:
+            spec = _json.loads(text)
+
+        return cls(
+            base_url=spec["url"],
+            model=spec.get("model", ""),
+            api_key=api_key or spec.get("api_key"),
+            req_template=spec.get("request"),
+            response_field=spec.get("response_field"),
+            method=spec.get("method", "post"),
+            extra_headers=spec.get("headers", {}),
+        )
 
 
 class CallableProvider(Provider):
