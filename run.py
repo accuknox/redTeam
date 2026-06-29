@@ -20,6 +20,7 @@ from pathlib import Path
 
 from config import load_config
 from detectors import get_detector
+from findings import FindingsReport
 from strategies import apply_strategies
 
 
@@ -39,6 +40,8 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
     out_file = Path(output_path) if output_path else Path(
         f"results_{datetime.now().strftime('%Y%m%dT%H%M%S')}.jsonl"
     )
+    # Category-mapped findings report, written alongside the flat JSONL log.
+    findings_file = out_file.with_suffix(".findings.json")
 
     if cfg.target is not None:
         target = cfg.target
@@ -78,6 +81,14 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
     vulnerable = 0
     by_plugin: dict[str, dict] = {}
 
+    report = FindingsReport(
+        run_id=run_id,
+        purpose=cfg.purpose,
+        target_name=target.name,
+        generation_model=cfg.generation.name,
+        grading_model=cfg.grading.name,
+    )
+
     with out_file.open("w", encoding="utf-8") as f:
 
         for plugin, test_cases in all_results:
@@ -109,6 +120,9 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
 
                 verdict = "RESISTED" if result.passed else "VULNERABLE"
                 print(f"     {verdict}  {result.reason}\n")
+
+                # --- map into the category/sub-category findings report --------
+                report.add(case=case, response=response, result=result)
 
                 # --- write JSONL record ----------------------------------------
                 record = {
@@ -154,6 +168,9 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
         }
         f.write(json.dumps(summary) + "\n")
 
+    # --- write the category-mapped findings file --------------------------------
+    report.write(findings_file)
+
     # --- print summary ----------------------------------------------------------
     print("=" * 50)
     print(f"Total cases  : {total}")
@@ -167,6 +184,7 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
               f"({1 - counts['pass_rate']:.0%})")
     print()
     print(f"Results written to {out_file}")
+    print(f"Findings written to {findings_file}")
 
 
 if __name__ == "__main__":

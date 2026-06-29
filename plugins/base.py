@@ -228,23 +228,39 @@ class RedteamPlugin(ABC):
 # Dataset-backed plugin
 # --------------------------------------------------------------------------- #
 
-def _load_prompts(path: Path, column: str | None) -> list[str]:
-    """Load prompt strings from a dataset file.
+def _load_rows(
+    path: Path, column: str | None, category_column: str | None
+) -> list[tuple[str, str | None]]:
+    """Load `(prompt, category)` pairs from a dataset file.
+
+    `category` is the value of `category_column` for tabular/object rows, or
+    `None` when the row has no such field (or for string/plain-text datasets).
+    It lets a single dataset route each prompt to its own taxonomy grader.
 
     Supported formats:
-      .csv        — tabular; `column` selects which column (default: first).
+      .csv        — tabular; `column` selects the prompt column (default: first).
       .json       — list of strings, or list of objects (use `column` as key).
       .jsonl      — one JSON object/string per line.
       .txt / other — one prompt per non-empty line.
     """
     suffix = path.suffix.lower()
 
+    def _cat(row: dict) -> str | None:
+        if not category_column:
+            return None
+        val = row.get(category_column)
+        return str(val).strip() or None if val and str(val).strip() else None
+
     if suffix == ".csv":
         with open(path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             if column is None:
                 column = reader.fieldnames[0] if reader.fieldnames else ""
-            return [row[column] for row in reader if row.get(column, "").strip()]
+            return [
+                (row[column], _cat(row))
+                for row in reader
+                if row.get(column, "").strip()
+            ]
 
     if suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -252,28 +268,33 @@ def _load_prompts(path: Path, column: str | None) -> list[str]:
             raise ValueError(f"dataset JSON must be a list, got {type(data).__name__}")
         if data and isinstance(data[0], dict):
             col = column or "prompt"
-            return [row[col] for row in data if row.get(col, "").strip()]
-        return [str(item) for item in data if str(item).strip()]
+            return [
+                (row[col], _cat(row)) for row in data if row.get(col, "").strip()
+            ]
+        return [(str(item), None) for item in data if str(item).strip()]
 
     if suffix == ".jsonl":
-        prompts: list[str] = []
+        rows: list[tuple[str, str | None]] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
             obj = json.loads(line)
             if isinstance(obj, str):
-                prompts.append(obj)
+                rows.append((obj, None))
             elif isinstance(obj, dict):
                 col = column or "prompt"
                 val = obj.get(col, "")
                 if val and str(val).strip():
-                    prompts.append(str(val))
-        return prompts
+                    rows.append((str(val), _cat(obj)))
+        return rows
 
     # plain text fallback
-    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()]
+    return [
+        (line.strip(), None)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 class DatasetPlugin:
@@ -281,6 +302,12 @@ class DatasetPlugin:
 
     Supports CSV, JSON, JSONL, and plain-text datasets.  Samples up to
     `num_tests` rows (randomly if the file has more, all if fewer).
+
+    When the dataset carries a per-row category column (`category_column`), each
+    prompt routes to the grader named by its own category — so one mixed dataset
+    (e.g. taxonomy-labelled prompts) fans out across `harmful:hate`,
+    `harmful:harassment-bullying`, ... instead of collapsing under one grader.
+    Rows with no category fall back to the dataset-level `detector_id` / `id`.
     """
 
     def __init__(
@@ -290,6 +317,7 @@ class DatasetPlugin:
         detector_id: str,
         purpose: str,
         column: str | None = None,
+        category_column: str | None = "category",
         num_tests: int = 5,
         plugin_id: str = "dataset",
         sample: bool = True,
@@ -304,23 +332,34 @@ class DatasetPlugin:
         path = Path(dataset_path)
         if not path.exists():
             raise FileNotFoundError(f"dataset not found: {path}")
-        self._prompts = _load_prompts(path, column)
-        if not self._prompts:
+        self._rows = _load_rows(path, column, category_column)
+        if not self._rows:
             raise ValueError(f"dataset is empty: {path}")
         self._rng = random.Random(seed)
 
     def generate_tests(self) -> list[TestCase]:
-        if self.sample and len(self._prompts) > self.num_tests:
-            selected = self._rng.sample(self._prompts, self.num_tests)
+        if self.sample and len(self._rows) > self.num_tests:
+            selected = self._rng.sample(self._rows, self.num_tests)
         else:
-            selected = self._prompts[: self.num_tests]
+            selected = self._rows[: self.num_tests]
 
-        return [
-            TestCase(
-                prompt=p,
-                plugin_id=self.id,
-                detector_id=self.detector_id,
-                metadata={"purpose": self.purpose, "source": "dataset"},
+        cases: list[TestCase] = []
+        for prompt, category in selected:
+            # A row's category is a taxonomy id: it is both the grader to route
+            # to and the sub-category the finding groups under. No category ->
+            # fall back to the dataset-level detector/id.
+            detector_id = category or self.detector_id
+            plugin_id = category or self.id
+            cases.append(
+                TestCase(
+                    prompt=prompt,
+                    plugin_id=plugin_id,
+                    detector_id=detector_id,
+                    metadata={
+                        "purpose": self.purpose,
+                        "source": "dataset",
+                        "dataset_id": self.id,
+                    },
+                )
             )
-            for p in selected
-        ]
+        return cases

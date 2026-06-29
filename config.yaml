@@ -73,9 +73,14 @@ plugins:
   # Supported formats: .csv, .json, .jsonl, .txt (one prompt per line).
 #  # - dataset: datasets/harmbench.csv   # path to the dataset file
 #  #   column: prompt                    # column/key containing the prompt text
-#  #   detector: prompt-injection        # which grader to route results to
+#  #   category_column: category         # per-row taxonomy id -> per-row grader
+#  #                                     #   (default "category"; rows without one
+#  #                                     #    fall back to `detector` below)
+#  #   detector: prompt-injection        # grader for rows lacking a category
 #  #   id: harmbench                     # optional label (default: "dataset")
-#  #   sample: true                      # random sample if file > num_generations
+#  #   count: 100                        # sample size for THIS dataset only
+#  #                                     #   (overrides num_generations)
+#  #   sample: true                      # random sample if file > count
 
 # Attack strategies — applied to every generated prompt after plugin generation.
 # Each strategy produces one extra TestCase per original attack.

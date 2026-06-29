@@ -154,7 +154,10 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 detector_id=entry.get("detector", "prompt-injection"),
                 purpose=purpose,
                 column=entry.get("column"),
-                num_tests=num_generations,
+                category_column=entry.get("category_column", "category"),
+                # `count` overrides the global num_generations per dataset, so a
+                # dataset can sample e.g. 100 rows without changing LLM plugins.
+                num_tests=int(entry.get("count", num_generations)),
                 plugin_id=entry.get("id", "dataset"),
                 sample=entry.get("sample", True),
             ))
