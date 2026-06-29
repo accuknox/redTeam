@@ -30,26 +30,64 @@ grading:
   # model: claude-opus-4-8
   # effort: low
   # To use your local gated evaluator instead:
-  backend: local
-  url: http://0.0.0.0:47923
-  model: redteam-evaluator-gated
+  # backend: local
+  # url: http://100.92.159.5:47923
+  # model: redteam-evaluator-gated
   # api_key: your-key-here   # omit if no auth required
+  backend: mistral
+  model: ministral-8b-2410
+  temperature: 0.7
+  api_key: 3XqEOutxHs1BxIYBsgwBY0kHEghyVEmm
 
 # The system under test.
 target:
   purpose: "A customer-support assistant for an online bookstore."
-  # How to invoke the target. Two backends:
+
+  # How to invoke the target — pick one type and uncomment it.
   #
-  # REST — any OpenAI-compatible endpoint:
-  #   backend: rest
-  #   url: http://my-api:8080
-  #   model: my-model          # sent in the request body
-  #   api_key: sk-...          # optional Bearer token
+  # ── type: rest ──────────────────────────────────────────────────────────────
+  # Generic REST endpoint with a custom request/response shape.
+  # Use a config file (-G) to define the payload template and response path,
+  # or supply just a base URL if the endpoint is already OpenAI-compatible.
   #
-  # Module — a Python file with  def invoke(prompt: str) -> str:
-  #   backend: module
-  #   module: my_target.py
+  # Option A — config file (any API shape):
+  #   type: rest
+  #   config: my_api.yaml        # YAML/JSON file — see template below
   #
+  # Option B — bare URL (OpenAI-compatible endpoint at a custom host):
+  #   type: rest
+  #   name: http://my-api:8080   # full base URL
+  #   model: my-model            # model name sent in the request body
+  #   api_key: sk-...            # optional Bearer token
+  #
+  # Config file format (my_api.yaml):
+  #   url: http://my-api:8080/generate
+  #   method: post
+  #   headers:
+  #     Authorization: "Bearer $KEY"   # $KEY replaced by api_key
+  #   request:
+  #     message: "$INPUT"              # $INPUT replaced by the attack prompt
+  #     max_tokens: 512
+  #   response_field: output.text      # dot-path into the JSON response
+  #   api_key: my-secret
+  #
+  # ── type: openai ────────────────────────────────────────────────────────────
+  # OpenAI API or any local server that speaks the OpenAI format
+  # (vLLM, Ollama, LM Studio, etc.).
+  #
+  #   type: openai
+  #   name: gpt-4o                     # model name  (uses api.openai.com)
+  #   api_key: sk-...
+  #
+  #   type: openai
+  #   name: http://localhost:11434     # custom base URL  (Ollama / vLLM)
+  #   model: llama3
+  #
+  # ── type: function ──────────────────────────────────────────────────────────
+  # Call a local Python function — useful for testing without a running server.
+  #
+  #   type: function
+  #   name: my_target#invoke           # module#function  (module must be importable)
 
 # How many adversarial prompts each plugin should generate.
 num_generations: 1
@@ -57,14 +95,22 @@ num_generations: 1
 # Which plugins to run. Each entry is either a plugin id or a category key
 # (a category expands to all of its sub-plugins).
 #
-# Categories: security | privacy | harmful | criminal | trust
-#   security : prompt-injection, prompt-extraction, rbac, sql-injection, shell-injection
-#   privacy  : pii:direct, pii:api-db, pii:session, pii:social, cross-session-leak
-#   harmful  : harmful:hate, harmful:self-harm, harmful:harassment-bullying,
-#              harmful:graphic-content, harmful:sexual-content
-#   criminal : harmful:cybercrime, harmful:illegal-drugs, harmful:indiscriminate-weapons,
-#              harmful:violent-crime, harmful:non-violent-crime
-#   trust    : hallucination, excessive-agency, overreliance, contracts, competitors
+# Categories: security | privacy | harmful | criminal | trust | jailbreak | deception | code
+#
+#   security  (9) : prompt-injection, prompt-extraction, rbac, sql-injection, shell-injection,
+#                   ssrf, bola, bfla, indirect-prompt-injection
+#   privacy   (5) : pii:direct, pii:api-db, pii:session, pii:social, cross-session-leak
+#   harmful   (8) : harmful:hate, harmful:self-harm, harmful:harassment-bullying,
+#                   harmful:graphic-content, harmful:sexual-content,
+#                   harmful:radicalization, harmful:chemical-biological-weapons,
+#                   harmful:specialized-advice
+#   criminal  (5) : harmful:cybercrime, harmful:illegal-drugs, harmful:indiscriminate-weapons,
+#                   harmful:violent-crime, harmful:non-violent-crime
+#   trust     (8) : hallucination, excessive-agency, overreliance, contracts, competitors,
+#                   imitation, politics, goal-misalignment
+#   jailbreak (5) : dan, continuation, roleplay, hypothetical, grandma
+#   deception (5) : misinformation, sycophancy, fabrication, snowball, gaslighting
+#   code      (5) : malwaregen, xss, package-hallucination, backdoor, exploit-assist
 plugins:
   - prompt-injection      # a single plugin by id
   # - security            # or an entire category (all 5 sub-plugins)

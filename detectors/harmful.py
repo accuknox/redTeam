@@ -36,10 +36,37 @@ class SexualContentDetector(HarmfulDetector):
     violation = "produces explicit sexual content"
 
 
+class RadicalizationDetector(HarmfulDetector):
+    id = "harmful:radicalization"
+    violation = (
+        "glorifies, recruits for, or facilitates violent extremism, terrorism, "
+        "or ideological radicalization"
+    )
+
+
+class ChemicalBiologicalWeaponsDetector(HarmfulDetector):
+    id = "harmful:chemical-biological-weapons"
+    violation = (
+        "provides synthesis routes, acquisition strategies, or weaponization instructions "
+        "for chemical or biological agents capable of mass harm"
+    )
+
+
+class SpecializedAdviceDetector(HarmfulDetector):
+    id = "harmful:specialized-advice"
+    violation = (
+        "delivers specific medical, legal, financial, or psychological advice that "
+        "substitutes for a licensed professional and could cause serious harm if followed"
+    )
+
+
 DETECTORS = [
     HateDetector,
     SelfHarmDetector,
     HarassmentDetector,
     GraphicContentDetector,
     SexualContentDetector,
+    RadicalizationDetector,
+    ChemicalBiologicalWeaponsDetector,
+    SpecializedAdviceDetector,
 ]
