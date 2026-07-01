@@ -201,14 +201,13 @@ evaluator via `detectors.get_detector()`.
 | `deception` (5) | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting` |
 | `code` (5) | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
 
-A `plugins:` entry in config may be a plugin id (`prompt-injection`) or a
-category key (`security`) which expands to all 5 sub-plugins in that category.
+Each `plugins:` entry may be a plain plugin id, a category key that expands to all its sub-plugins, or a dict with per-plugin overrides. See [Plugin configuration](#plugin-configuration) below.
 
 ---
 
 ## Configuration
 
-`config.yaml` is the single source of run settings.
+`config.yaml` (or `config.json`) is the single source of run settings.
 
 ```yaml
 # Model that AUTHORS attacks
@@ -231,36 +230,54 @@ grading:
 # The system under test — pick one type:
 target:
   purpose: "A customer-support assistant for an online bookstore."
+  type: openai
+  name: gpt-4o              # model name (uses api.openai.com)
+  api_key: sk-...
+  # type: openai + name: http://localhost:11434  →  Ollama / vLLM (+ model: llama3)
+  # type: rest   + config: my_api.yaml           →  generic REST (any API shape)
+  # type: function + name: my_module#invoke      →  local Python callable
 
-  # type: rest — generic REST endpoint (any API shape)
-  # type: rest
-  # config: my_api.yaml      # YAML config file (see below)
-  #   — OR —
-  # name: http://my-api:8080  # bare URL if endpoint is OpenAI-compatible
-  # model: my-model
-  # api_key: sk-...
+num_generations: 5          # attacks per plugin (global default)
 
-  # type: openai — OpenAI or any OpenAI-compatible local server
-  # type: openai
-  # name: gpt-4o              # model name  (uses api.openai.com)
-  # name: http://localhost:11434  # custom base URL (Ollama / vLLM)
-  # model: llama3
-  # api_key: sk-...
+# ── Global generation options ─────────────────────────────────────────────────
+# All of these can also be overridden per-plugin (see Plugin configuration).
 
-  # type: function — local Python callable
-  # type: function
-  # name: my_target#invoke    # module#function (module must be importable)
+language: es                # generate attacks natively in this language
+                            # ISO 639-1 two-letter code:
+                            # en | es | zh | fr | de | ar | ru | ja | pt | ko
+                            # hi | it | nl | tr | pl | vi | th | id
 
-num_generations: 5          # attacks per plugin
+max_chars_per_message: 500  # truncate generated prompts to N characters
 
-# Plugin ids and/or category keys
+delay: 200                  # milliseconds to wait between target API calls
+
+generation_instructions: |   # extra guidance injected into every plugin's meta-prompt
+  Focus on our e-commerce checkout flows and payment handling.
+
+# ── Plugins ───────────────────────────────────────────────────────────────────
 plugins:
-  - prompt-injection
-  - security
-  - jailbreak
-  - code
+  - prompt-injection                # string form — uses global defaults
 
-# Attack strategies
+  - id: sql-injection               # dict form — per-plugin overrides
+    num_tests: 10                   # attacks for this plugin only
+    severity: critical              # critical | high | medium | low
+    language: en                    # override global language for this plugin
+    max_chars: 300                  # override global max_chars for this plugin
+    examples: |                     # seed the meta-prompt with your own examples
+      ' OR 1=1 --
+      1; DROP TABLE users;--
+    generation_instructions: |      # extra guidance for this plugin only
+      Target the product search and order lookup endpoints.
+
+  - id: security                    # category key in dict form — overrides apply
+    severity: high                  # to all 9 security sub-plugins
+    num_tests: 3
+
+  - dataset: datasets/harmbench.csv # static dataset
+    column: prompt
+    count: 100
+
+# ── Attack strategies ─────────────────────────────────────────────────────────
 strategies:
   - base64
   - fiction
@@ -272,6 +289,29 @@ strategies:
     config:
       num_shots: 15
 ```
+
+### Plugin configuration
+
+Three forms are supported in the `plugins:` list:
+
+| Form | Example | Effect |
+|---|---|---|
+| String | `- sql-injection` | Uses global `num_generations`, no overrides |
+| String (category) | `- security` | Expands to all sub-plugins, global defaults |
+| Dict with `id` | `- id: sql-injection` + overrides | Per-plugin settings |
+| Dict with `id` (category) | `- id: security` + overrides | Shared overrides for every sub-plugin |
+| Dict with `dataset` | `- dataset: file.csv` | Static prompts from a file |
+
+**Per-plugin override keys:**
+
+| Key | Type | Description |
+|---|---|---|
+| `num_tests` | int | Attacks to generate for this plugin (overrides `num_generations`) |
+| `severity` | string | `critical` \| `high` \| `medium` \| `low` — shown in output and summary |
+| `language` | string | Generate attacks in this language — ISO 639-1 code (overrides global `language`). Supported: `en` `es` `zh` `fr` `de` `ar` `ru` `ja` `pt` `ko` `hi` `it` `nl` `tr` `pl` `vi` `th` `id` |
+| `max_chars` | int | Truncate generated prompts to N chars (overrides `max_chars_per_message`) |
+| `examples` | string | Seed examples injected into the meta-prompt |
+| `generation_instructions` | string | Extra guidance injected into the meta-prompt |
 
 ### REST config file (`my_api.yaml`)
 
@@ -350,6 +390,7 @@ Results are written as JSON (default) or JSONL. Each record contains:
   "run_id":           "3f7a1c2e-...",
   "plugin_id":        "dan",
   "detector_id":      "dan",
+  "severity":         "critical",
   "strategy":         "base64",
   "attack":           "RG8gYW55dGhpbmcgbm93...",
   "original_prompt":  "Do anything now...",

@@ -136,6 +136,7 @@ class RedTeamConfig:
     purpose: str
     num_generations: int
     concurrency: int
+    delay_ms: int
     generation: Generator
     grading: Judge
     plugins: list[RedteamPlugin]
@@ -145,41 +146,79 @@ class RedTeamConfig:
 
 
 def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
-    """Load and wire a `RedTeamConfig` from a YAML file."""
+    """Load and wire a `RedTeamConfig` from a YAML or JSON file."""
     data = yaml.safe_load(Path(path).read_text())
 
     purpose = data["target"]["purpose"]
     num_generations = int(data.get("num_generations", 5))
     concurrency = int(data.get("concurrency", 1))
+    delay_ms = int(data.get("delay", 0) or 0)
 
     generation = build_generator(data["generation"])
     grading = build_judge(data["grading"])
 
+    # Global options injected into every plugin's meta-prompt.
+    global_instructions: str = data.get("generation_instructions", "") or ""
+    global_language: str = data.get("language", "") or ""
+    global_max_chars: int = int(data.get("max_chars_per_message", 0) or 0)
+
     # `plugins` entries may be:
     #   - a string: plugin id or category key (expanded to all sub-plugins)
+    #   - a dict with "id": per-plugin overrides (num_tests, severity, examples, ...)
     #   - a dict with "dataset": a static-dataset plugin
     raw_entries = data.get("plugins", [])
-    string_entries = [e for e in raw_entries if isinstance(e, str)]
-    plugin_ids = resolve_plugin_ids(string_entries)
-    plugins: list[RedteamPlugin | DatasetPlugin] = [
-        get_plugin(pid, generation, purpose, num_tests=num_generations,
-                   concurrency=concurrency)
-        for pid in plugin_ids
-    ]
+
+    plugins: list[RedteamPlugin | DatasetPlugin] = []
+
     for entry in raw_entries:
-        if isinstance(entry, dict) and "dataset" in entry:
+        if isinstance(entry, str):
+            # String form — expand categories and use all global defaults.
+            for pid in resolve_plugin_ids([entry]):
+                plugins.append(
+                    get_plugin(pid, generation, purpose,
+                               num_tests=num_generations,
+                               generation_instructions=global_instructions,
+                               language=global_language,
+                               max_chars=global_max_chars,
+                               concurrency=concurrency)
+                )
+
+        elif isinstance(entry, dict) and "dataset" in entry:
+            # Static dataset plugin — loads prompts from a file.
             plugins.append(DatasetPlugin(
                 dataset_path=entry["dataset"],
                 detector_id=entry.get("detector", "prompt-injection"),
                 purpose=purpose,
                 column=entry.get("column"),
                 category_column=entry.get("category_column", "category"),
-                # `count` overrides the global num_generations per dataset, so a
-                # dataset can sample e.g. 100 rows without changing LLM plugins.
+                # `count` overrides the global num_generations per dataset.
                 num_tests=int(entry.get("count", num_generations)),
                 plugin_id=entry.get("id", "dataset"),
                 sample=entry.get("sample", True),
             ))
+
+        elif isinstance(entry, dict) and "id" in entry:
+            # Dict form — per-plugin overrides.
+            # A category key in `id` expands to all its sub-plugins, each
+            # inheriting the same overrides.
+            pid_or_cat = entry["id"]
+            per_num      = int(entry.get("num_tests", num_generations))
+            per_sev      = str(entry.get("severity", ""))
+            per_ex       = str(entry.get("examples", ""))
+            per_instr    = str(entry.get("generation_instructions", global_instructions))
+            per_lang     = str(entry.get("language", global_language))
+            per_max_chars = int(entry.get("max_chars", global_max_chars) or 0)
+            for pid in resolve_plugin_ids([pid_or_cat]):
+                plugins.append(
+                    get_plugin(pid, generation, purpose,
+                               num_tests=per_num,
+                               severity=per_sev,
+                               examples=per_ex or None,
+                               generation_instructions=per_instr,
+                               language=per_lang,
+                               max_chars=per_max_chars,
+                               concurrency=concurrency)
+                )
 
     strategies: list[Strategy] = [
         get_strategy(s) for s in data.get("strategies", [])
@@ -192,6 +231,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         purpose=purpose,
         num_generations=num_generations,
         concurrency=concurrency,
+        delay_ms=delay_ms,
         generation=generation,
         grading=grading,
         plugins=plugins,

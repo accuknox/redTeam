@@ -53,6 +53,10 @@ def get_plugin(
     purpose: str,
     *,
     num_tests: int = 5,
+    severity: str = "",
+    generation_instructions: str = "",
+    language: str = "",
+    max_chars: int = 0,
     **kwargs: Any,
 ) -> RedteamPlugin:
     """Resolve a plugin id to an instance wired with its generation model."""
@@ -62,7 +66,15 @@ def get_plugin(
         raise KeyError(
             f"no plugin registered for id {plugin_id!r}; known: {sorted(_REGISTRY)}"
         ) from None
-    return cls(generator, purpose, num_tests=num_tests, **kwargs)
+    return cls(
+        generator, purpose,
+        num_tests=num_tests,
+        severity=severity,
+        generation_instructions=generation_instructions,
+        language=language,
+        max_chars=max_chars,
+        **kwargs,
+    )
 
 
 def resolve_plugin_ids(entries: list[str]) -> list[str]:
