@@ -37,7 +37,7 @@ grading:
   backend: mistral
   model: ministral-8b-2410
   temperature: 0.7
-  api_key: 3XqEOutxHs1BxIYBsgwBY0kHEghyVEmm
+  api_key: abcd
 
 # The system under test.
 target:
@@ -89,11 +89,51 @@ target:
   #   type: function
   #   name: my_target#invoke           # module#function  (module must be importable)
 
-# How many adversarial prompts each plugin should generate.
+# How many adversarial prompts each plugin should generate (global default).
 num_generations: 1
 
-# Which plugins to run. Each entry is either a plugin id or a category key
-# (a category expands to all of its sub-plugins).
+# Optional global generation settings (all can also be overridden per-plugin).
+#
+# language: es                 # generate attacks natively in this language (ISO 639-1 two-letter code)
+#                              # en | es | zh | fr | de | ar | ru | ja | pt | ko
+#                              # hi | it | nl | tr | pl | vi | th | id
+#
+# max_chars_per_message: 500   # truncate generated prompts to N characters
+#
+# delay: 200                   # milliseconds to wait between target API calls (rate limiting)
+#
+# generation_instructions: |
+#   Focus on a healthcare context. Mention patient records, HIPAA, and medical data.
+
+# Which plugins to run. Three forms are supported:
+#
+# 1. String — plugin id or category key (uses global num_generations, no extras):
+#      - prompt-injection
+#      - security          # expands to all 9 security sub-plugins
+#
+# 2. Dict with `id` — per-plugin overrides:
+#      - id: sql-injection
+#        num_tests: 10               # override attacks for this plugin only
+#        severity: critical          # critical | high | medium | low
+#        examples: |                 # seed the meta-prompt with your own examples
+#          ' OR 1=1 --
+#          1; DROP TABLE users;--
+#        generation_instructions: |  # extra guidance for this plugin only
+#          Target the product search and order lookup endpoints.
+#
+#    A category key in `id` applies the overrides to all sub-plugins:
+#      - id: security
+#        severity: critical
+#        num_tests: 5
+#
+# 3. Dict with `dataset` — static prompts from a file:
+#      - dataset: datasets/harmbench.csv
+#        column: prompt              # column containing the prompt text
+#        category_column: category   # per-row taxonomy id (optional)
+#        detector: prompt-injection  # grader for rows lacking a category
+#        id: harmbench               # optional label (default: "dataset")
+#        count: 100                  # sample size (overrides num_generations)
+#        sample: true                # random sample if file > count
 #
 # Categories: security | privacy | harmful | criminal | trust | jailbreak | deception | code
 #
@@ -112,21 +152,15 @@ num_generations: 1
 #   deception (5) : misinformation, sycophancy, fabrication, snowball, gaslighting
 #   code      (5) : malwaregen, xss, package-hallucination, backdoor, exploit-assist
 plugins:
-  - prompt-injection      # a single plugin by id
-  # - security            # or an entire category (all 5 sub-plugins)
-  # - harmful
-  # Static dataset plugin — loads prompts from a file instead of generating.
-  # Supported formats: .csv, .json, .jsonl, .txt (one prompt per line).
-#  # - dataset: datasets/harmbench.csv   # path to the dataset file
-#  #   column: prompt                    # column/key containing the prompt text
-#  #   category_column: category         # per-row taxonomy id -> per-row grader
-#  #                                     #   (default "category"; rows without one
-#  #                                     #    fall back to `detector` below)
-#  #   detector: prompt-injection        # grader for rows lacking a category
-#  #   id: harmbench                     # optional label (default: "dataset")
-#  #   count: 100                        # sample size for THIS dataset only
-#  #                                     #   (overrides num_generations)
-#  #   sample: true                      # random sample if file > count
+  - prompt-injection        # string form — global defaults
+  # - id: sql-injection     # dict form — per-plugin overrides
+  #   num_tests: 10
+  #   severity: critical
+  # - id: security          # dict form on a category — applies to all 9 sub-plugins
+  #   severity: high
+  # - dataset: datasets/harmbench.csv
+  #   column: prompt
+  #   count: 100
 
 # Attack strategies — applied to every generated prompt after plugin generation.
 # Each strategy produces one extra TestCase per original attack.

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -65,7 +66,7 @@ examples:
     run = p.add_argument_group("run")
     run.add_argument(
         "--config", "-c", default=None, metavar="PATH",
-        help="path to config.yaml (default: config.yaml in cwd)",
+        help="path to config file — YAML or JSON (default: config.yaml in cwd)",
     )
     run.add_argument(
         "--plugins", "-p", default=None, metavar="PLUGIN[,PLUGIN...]",
@@ -314,10 +315,13 @@ def main(argv: list[str] | None = None) -> None:
 
         for i, case in enumerate(augmented, 1):
             strategy = case.metadata.get("strategy")
-            tag = f"[{strategy}] " if strategy else ""
-            print(f"  [{i}] {tag}{case.prompt}")
+            sev_tag  = f"[{case.severity.upper()}] " if case.severity else ""
+            strat_tag = f"[{strategy}] " if strategy else ""
+            print(f"  [{i}] {sev_tag}{strat_tag}{case.prompt}")
 
             response = target.generate(case.prompt)
+            if cfg.delay_ms:
+                time.sleep(cfg.delay_ms / 1000)
             detector = get_detector(case.detector_id, cfg.grading)
             result = detector.grade(
                 attack=case.prompt, response=response, purpose=cfg.purpose
@@ -331,6 +335,7 @@ def main(argv: list[str] | None = None) -> None:
                 "timestamp":        _now(),
                 "plugin_id":        case.plugin_id,
                 "detector_id":      case.detector_id,
+                "severity":         case.severity or None,
                 "strategy":         strategy,
                 "attack":           case.prompt,
                 "original_prompt":  case.metadata.get("original_prompt"),
@@ -345,6 +350,7 @@ def main(argv: list[str] | None = None) -> None:
 
             total += 1
             by_plugin[plugin.id]["total"] += 1
+            by_plugin[plugin.id].setdefault("severity", case.severity or "")
             if not result.passed:
                 vulnerable += 1
                 by_plugin[plugin.id]["vulnerable"] += 1
@@ -383,8 +389,27 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Resisted   : {total - vulnerable}  ({summary['pass_rate']:.0%})" if total else "Resisted   : 0")
     print("\nBy plugin:")
     for pid, counts in by_plugin.items():
+        sev = counts.get("severity", "")
+        sev_label = f"[{sev.upper()}] " if sev else ""
         bar = "█" * counts["vulnerable"] + "░" * (counts["total"] - counts["vulnerable"])
-        print(f"  {pid:<30} {bar}  {counts['vulnerable']}/{counts['total']} vulnerable")
+        print(f"  {sev_label}{pid:<30} {bar}  {counts['vulnerable']}/{counts['total']} vulnerable")
+
+    # Severity breakdown — only shown when at least one plugin has severity set.
+    severity_order = ["critical", "high", "medium", "low"]
+    by_sev: dict[str, dict] = {}
+    for counts in by_plugin.values():
+        sev = counts.get("severity", "")
+        if sev:
+            bucket = by_sev.setdefault(sev, {"total": 0, "vulnerable": 0})
+            bucket["total"]     += counts["total"]
+            bucket["vulnerable"] += counts["vulnerable"]
+    if by_sev:
+        print("\nBy severity:")
+        for sev in severity_order:
+            if sev in by_sev:
+                b = by_sev[sev]
+                print(f"  {sev:<10}  {b['vulnerable']}/{b['total']} vulnerable")
+
     print(f"\nResults → {out_file}")
 
 

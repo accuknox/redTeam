@@ -81,6 +81,7 @@ class TestCase:
     plugin_id: str
     detector_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    severity: str = ""  # critical | high | medium | low | ""
 
 
 # Generations that are really the generator refusing, not an attack.
@@ -121,6 +122,10 @@ class RedteamPlugin(ABC):
         *,
         num_tests: int = 5,
         examples: str = "",
+        severity: str = "",
+        generation_instructions: str = "",
+        language: str = "",
+        max_chars: int = 0,
         max_attempts: int = 5,
         concurrency: int = 1,
         config: dict[str, Any] | None = None,
@@ -131,6 +136,10 @@ class RedteamPlugin(ABC):
         self.purpose = purpose
         self.num_tests = num_tests
         self.examples = examples
+        self.severity = severity
+        self.generation_instructions = generation_instructions
+        self.language = language
+        self.max_chars = max_chars
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.config = dict(config or {})
@@ -199,6 +208,8 @@ class RedteamPlugin(ABC):
             purpose=self.purpose,
             n=n,
             examples=self.examples,
+            generation_instructions=self.generation_instructions,
+            language=self.language,
             **self.config,
         )
 
@@ -216,11 +227,14 @@ class RedteamPlugin(ABC):
         return [line.strip() for line in raw.splitlines() if line.strip()]
 
     def _build_test_case(self, prompt: str) -> TestCase:
+        if self.max_chars and len(prompt) > self.max_chars:
+            prompt = prompt[: self.max_chars]
         return TestCase(
             prompt=prompt,
             plugin_id=self.id,
             detector_id=self.detector_id or self.id,
             metadata={"purpose": self.purpose, "plugin_config": self.config},
+            severity=self.severity,
         )
 
 
