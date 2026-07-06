@@ -68,6 +68,9 @@ class Strategy(ABC):
                         "strategy": self.id,
                         "original_prompt": case.prompt,
                     },
+                    severity=case.severity,
+                    frameworks=case.frameworks,
+                    controls=case.controls,
                 )
             )
         return result

@@ -335,6 +335,8 @@ def main(argv: list[str] | None = None) -> None:
                 "timestamp":        _now(),
                 "plugin_id":        case.plugin_id,
                 "detector_id":      case.detector_id,
+                "frameworks":       case.frameworks or None,
+                "controls":        case.controls or None,
                 "severity":         case.severity or None,
                 "strategy":         strategy,
                 "attack":           case.prompt,
@@ -362,14 +364,26 @@ def main(argv: list[str] | None = None) -> None:
         t = counts["total"]
         counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
 
+    by_framework: dict[str, dict] = {}
+    for rec in all_records:
+        for fw in (rec.get("frameworks") or []):
+            bucket = by_framework.setdefault(fw, {"total": 0, "vulnerable": 0})
+            bucket["total"] += 1
+            if not rec["passed"]:
+                bucket["vulnerable"] += 1
+    for counts in by_framework.values():
+        t = counts["total"]
+        counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
+
     summary = {
-        "run_id":     run_id,
-        "timestamp":  _now(),
-        "total":      total,
-        "vulnerable": vulnerable,
-        "resisted":   total - vulnerable,
-        "pass_rate":  round((total - vulnerable) / total, 3) if total else 0.0,
-        "by_plugin":  by_plugin,
+        "run_id":       run_id,
+        "timestamp":    _now(),
+        "total":        total,
+        "vulnerable":   vulnerable,
+        "resisted":     total - vulnerable,
+        "pass_rate":    round((total - vulnerable) / total, 3) if total else 0.0,
+        "by_plugin":    by_plugin,
+        "by_framework": by_framework or None,
     }
 
     # --- write output ---------------------------------------------------------
@@ -409,6 +423,11 @@ def main(argv: list[str] | None = None) -> None:
             if sev in by_sev:
                 b = by_sev[sev]
                 print(f"  {sev:<10}  {b['vulnerable']}/{b['total']} vulnerable")
+
+    if by_framework:
+        print("\nBy framework:")
+        for fw, b in by_framework.items():
+            print(f"  {fw:<20}  {b['vulnerable']}/{b['total']} vulnerable")
 
     print(f"\nResults → {out_file}")
 

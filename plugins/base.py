@@ -81,7 +81,9 @@ class TestCase:
     plugin_id: str
     detector_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    severity: str = ""  # critical | high | medium | low | ""
+    severity: str = ""
+    frameworks: list[str] = field(default_factory=list)  # e.g. ["owasp:llm", "nist:ai:rmf"]
+    controls: list[str] = field(default_factory=list)    # e.g. ["owasp:llm:01", "nist:ai:rmf:manage"]
 
 
 # Generations that are really the generator refusing, not an attack.
@@ -227,6 +229,7 @@ class RedteamPlugin(ABC):
         return [line.strip() for line in raw.splitlines() if line.strip()]
 
     def _build_test_case(self, prompt: str) -> TestCase:
+        from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS  # deferred — avoids circular import
         if self.max_chars and len(prompt) > self.max_chars:
             prompt = prompt[: self.max_chars]
         return TestCase(
@@ -235,6 +238,8 @@ class RedteamPlugin(ABC):
             detector_id=self.detector_id or self.id,
             metadata={"purpose": self.purpose, "plugin_config": self.config},
             severity=self.severity,
+            frameworks=PLUGIN_FRAMEWORKS.get(self.id, []),
+            controls=PLUGIN_CONTROLS.get(self.id, []),
         )
 
 
@@ -352,6 +357,7 @@ class DatasetPlugin:
         self._rng = random.Random(seed)
 
     def generate_tests(self) -> list[TestCase]:
+        from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS  # deferred — avoids circular import
         if self.sample and len(self._rows) > self.num_tests:
             selected = self._rng.sample(self._rows, self.num_tests)
         else:
@@ -359,9 +365,6 @@ class DatasetPlugin:
 
         cases: list[TestCase] = []
         for prompt, category in selected:
-            # A row's category is a taxonomy id: it is both the grader to route
-            # to and the sub-category the finding groups under. No category ->
-            # fall back to the dataset-level detector/id.
             detector_id = category or self.detector_id
             plugin_id = category or self.id
             cases.append(
@@ -374,6 +377,8 @@ class DatasetPlugin:
                         "source": "dataset",
                         "dataset_id": self.id,
                     },
+                    frameworks=PLUGIN_FRAMEWORKS.get(plugin_id, []),
+                    controls=PLUGIN_CONTROLS.get(plugin_id, []),
                 )
             )
         return cases
