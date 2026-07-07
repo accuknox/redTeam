@@ -201,7 +201,45 @@ evaluator via `detectors.get_detector()`.
 | `deception` (5) | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting` |
 | `code` (5) | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
 
-Each `plugins:` entry may be a plain plugin id, a category key that expands to all its sub-plugins, or a dict with per-plugin overrides. See [Plugin configuration](#plugin-configuration) below.
+Each `plugins:` entry may be a plain plugin id, a category key, a **compliance framework key**, or a dict with per-plugin overrides. See [Plugin configuration](#plugin-configuration) below.
+
+### Compliance framework presets
+
+Framework keys expand to a curated bundle of relevant plugins — use them as a shortcut for standard-aligned test coverage:
+
+| Framework key | Standard | Plugins |
+|---|---|---|
+| `owasp:llm` | [OWASP LLM Top 10 (2023)](https://owasp.org/www-project-top-10-for-large-language-model-applications/) | 20 |
+| `owasp:api` | [OWASP API Security Top 10 (2023)](https://owasp.org/www-project-api-security/) | 10 |
+| `nist:ai:rmf` | [NIST AI Risk Management Framework](https://www.nist.gov/system/files/documents/2023/01/26/AI%20RMF%201.0.pdf) | 22 |
+| `mitre:atlas` | [MITRE ATLAS adversarial ML tactics](https://atlas.mitre.org/) | 19 |
+| `eu:ai-act` | [EU AI Act high-risk requirements](https://artificialintelligenceact.eu/) | 20 |
+| `iso:42001` | [ISO/IEC 42001 AI management system](https://www.iso.org/standard/81230.html) | 17 |
+
+**Plugin coverage by framework:**
+
+| Framework | Plugins included |
+|---|---|
+| `owasp:llm` | `prompt-injection`, `indirect-prompt-injection`, `xss`, `sql-injection`, `shell-injection`, `package-hallucination`, `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak`, `prompt-extraction`, `ssrf`, `bola`, `bfla`, `excessive-agency`, `goal-misalignment`, `overreliance`, `hallucination`, `misinformation`, `rbac` |
+| `owasp:api` | `bola`, `rbac`, `prompt-injection`, `pii:api-db`, `pii:direct`, `bfla`, `contracts`, `competitors`, `ssrf`, `prompt-extraction`, `indirect-prompt-injection`, `package-hallucination` |
+| `nist:ai:rmf` | `goal-misalignment`, `excessive-agency`, `contracts`, `hallucination`, `overreliance`, `misinformation`, `fabrication`, `sycophancy`, `harmful:hate`, `harmful:harassment-bullying`, `politics`, `pii:*`, `cross-session-leak`, `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `harmful:self-harm`, `harmful:radicalization`, `harmful:specialized-advice` |
+| `mitre:atlas` | `prompt-injection`, `indirect-prompt-injection`, jailbreak category, `rbac`, `bola`, `bfla`, `prompt-extraction`, `pii:direct`, `pii:api-db`, `cross-session-leak`, `malwaregen`, `backdoor`, `exploit-assist`, `harmful:chemical-biological-weapons`, `harmful:radicalization` |
+| `eu:ai-act` | `hallucination`, `misinformation`, `fabrication`, `sycophancy`, `gaslighting`, `harmful:self-harm`, `harmful:radicalization`, `harmful:chemical-biological-weapons`, `harmful:specialized-advice`, `harmful:hate`, `harmful:harassment-bullying`, `harmful:graphic-content`, `politics`, `imitation`, `pii:*`, `cross-session-leak`, `excessive-agency`, `goal-misalignment`, `overreliance`, `contracts` |
+| `iso:42001` | `goal-misalignment`, `excessive-agency`, `contracts`, `overreliance`, `hallucination`, `misinformation`, `fabrication`, `sycophancy`, `harmful:hate`, `harmful:harassment-bullying`, `harmful:self-harm`, `harmful:specialized-advice`, `pii:*`, `prompt-injection`, `prompt-extraction`, `rbac` |
+
+Use a framework key like any other plugin entry — combine with per-plugin overrides and other plugins freely:
+
+```yaml
+plugins:
+  - owasp:llm          # full OWASP LLM Top 10 bundle (string form)
+
+  - id: owasp:llm      # dict form — apply overrides to every plugin in the bundle
+    severity: high
+    num_tests: 3
+
+  - nist:ai:rmf        # also add NIST AI RMF plugins (duplicates auto-removed)
+  - harmful:cybercrime # add individual plugins on top
+```
 
 ---
 

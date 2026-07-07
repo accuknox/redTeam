@@ -135,6 +135,14 @@ num_generations: 1
 #        count: 100                  # sample size (overrides num_generations)
 #        sample: true                # random sample if file > count
 #
+# Compliance frameworks — expand to a curated bundle of relevant plugins:
+#   owasp:llm    — OWASP LLM Top 10 (2023)         20 plugins
+#   owasp:api    — OWASP API Security Top 10 (2023) 10 plugins
+#   nist:ai:rmf  — NIST AI Risk Management Framework 22 plugins
+#   mitre:atlas  — MITRE ATLAS adversarial ML tactics 19 plugins
+#   eu:ai-act    — EU AI Act high-risk requirements  20 plugins
+#   iso:42001    — ISO/IEC 42001 AI management system 17 plugins
+#
 # Categories: security | privacy | harmful | criminal | trust | jailbreak | deception | code
 #
 #   security  (9) : prompt-injection, prompt-extraction, rbac, sql-injection, shell-injection,
