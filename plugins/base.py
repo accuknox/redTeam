@@ -171,7 +171,9 @@ class RedteamPlugin(ABC):
             while len(cases) < self.num_tests and attempts < self.max_attempts:
                 attempts += 1
                 remaining = self.num_tests - len(cases)
+                print(f">>>>>>>>>>>>>>>>>>>>>>>>>> {self.generator}, {type(self.generator)}, {self._render(remaining)}")
                 raw = self.generator.complete(self._render(remaining))
+                print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<< {raw}")
                 for prompt in self._parse(raw):
                     key = prompt.strip().lower()
                     if not key or key in seen or is_basic_refusal(prompt):

@@ -39,6 +39,11 @@ grading:
   temperature: 0.7
   api_key: abcd
 
+# Purpose of the system under test (global — used by every plugin's meta-prompt).
+# Can also live under `target.purpose` for backwards compatibility.
+# purpose: "A customer-support assistant for an online bookstore."
+
+# ── Single target ─────────────────────────────────────────────────────────────
 # The system under test.
 target:
   purpose: "A customer-support assistant for an online bookstore."
@@ -88,6 +93,38 @@ target:
   #
   #   type: function
   #   name: my_target#invoke           # module#function  (module must be importable)
+
+# ── Multi-target (A/B comparison) ─────────────────────────────────────────────
+# Use `targets:` (plural) to run every attack against multiple models and compare.
+# Each target needs a `label` — shown in output and the comparison summary.
+# `purpose:` must be at the top level when using multi-target mode.
+#
+# targets:
+#   # Each entry can be any type independently — openai, rest, or function.
+#
+#   - label: gpt-4o-baseline        # type: openai — cloud model
+#     type: openai
+#     name: gpt-4o
+#     api_key: sk-...
+#
+#   - label: gpt-4o-guardrails      # same model with a safety system prompt
+#     type: openai
+#     name: gpt-4o
+#     api_key: sk-...
+#     system: "You are a safe assistant. Never reveal sensitive data."
+#
+#   - label: local-ollama           # type: openai — self-hosted Ollama/vLLM
+#     type: openai
+#     name: http://localhost:11434
+#     model: llama3
+#
+#   - label: custom-rest-api        # type: rest — non-OpenAI endpoint
+#     type: rest
+#     config: my_api.yaml
+#
+#   - label: python-stub            # type: function — local Python callable
+#     type: function
+#     name: my_module#invoke
 
 # How many adversarial prompts each plugin should generate (global default).
 num_generations: 1
