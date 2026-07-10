@@ -15,7 +15,7 @@ branch in each.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -143,13 +143,22 @@ class RedTeamConfig:
     strategies: list[Strategy]
     raw: dict[str, Any]
     target: Provider | None = None
+    targets: list[Provider] = field(default_factory=list)  # all targets; len>1 = multi-target run
 
 
 def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
     """Load and wire a `RedTeamConfig` from a YAML or JSON file."""
     data = yaml.safe_load(Path(path).read_text())
 
-    purpose = data["target"]["purpose"]
+    # purpose: top-level key takes precedence; falls back to target.purpose for
+    # backwards compatibility with single-target configs.
+    purpose = (
+        data.get("purpose")
+        or data.get("target", {}).get("purpose")
+        or ""
+    )
+    if not purpose:
+        raise ValueError("'purpose' is required — set it at the top level or under 'target:'")
     num_generations = int(data.get("num_generations", 5))
     concurrency = int(data.get("concurrency", 1))
     delay_ms = int(data.get("delay", 0) or 0)
@@ -172,7 +181,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
 
     for entry in raw_entries:
         if isinstance(entry, str):
-            # String form — expand categories and use all global defaults.
+            # String form — expand frameworks/categories and use all global defaults.
             for pid in resolve_plugin_ids([entry]):
                 plugins.append(
                     get_plugin(pid, generation, purpose,
@@ -224,8 +233,27 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         get_strategy(s) for s in data.get("strategies", [])
     ]
 
-    target_spec = data.get("target", {})
-    target = build_target(target_spec) if target_spec.get("type") else None
+    # Resolve target(s).
+    # `targets:` (plural) enables multi-target / A-B comparison runs.
+    # `target:`  (singular) is the original single-target form — still fully supported.
+    # Either way, RedTeamConfig.targets is always a list; .target is the first entry.
+    raw_targets = data.get("targets")  # plural — list of target specs
+    if raw_targets:
+        targets: list[Provider] = []
+        for i, t_spec in enumerate(raw_targets):
+            t_spec = dict(t_spec)
+            label = t_spec.pop("label", t_spec.get("name", f"target-{i + 1}"))
+            t_spec.pop("purpose", None)          # purpose is global in multi-target mode
+            provider = build_target(t_spec)
+            if provider:
+                provider.name = label            # label is what appears in output
+                targets.append(provider)
+        target = targets[0] if targets else None
+    else:
+        # single-target backwards compat
+        target_spec = data.get("target", {})
+        target = build_target(target_spec) if target_spec.get("type") else None
+        targets = [target] if target else []
 
     return RedTeamConfig(
         purpose=purpose,
@@ -238,4 +266,5 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         strategies=strategies,
         raw=data,
         target=target,
+        targets=targets,
     )

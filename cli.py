@@ -252,13 +252,19 @@ def main(argv: list[str] | None = None) -> None:
             model=model,
             api_key=args.target_api_key,
         )
-    elif cfg.target is not None:
-        target = cfg.target
+    elif cfg.targets:
+        target = cfg.targets[0]   # single-target path — use first (and only) target
     else:
         parser.error(
             "no target configured — use --target-type rest|openai|function "
-            "or add a 'target: type:' block to config.yaml"
+            "or add a 'target: type:' / 'targets:' block to config.yaml"
         )
+
+    # Normalise: CLI flags set cfg.target but not cfg.targets — unify here.
+    if not cfg.targets and target:
+        cfg.targets = [target]
+
+    is_multi = len(cfg.targets) > 1
 
     # --- output path ----------------------------------------------------------
     fmt = args.format
@@ -272,7 +278,10 @@ def main(argv: list[str] | None = None) -> None:
     print("=" * 50)
     print(f"Run ID          : {run_id}")
     print(f"Output          : {out_file}  [{fmt.upper()}]")
-    print(f"Target          : {target.name}")
+    if is_multi:
+        print(f"Targets         : {', '.join(t.name for t in cfg.targets)}")
+    else:
+        print(f"Target          : {target.name}")
     print(f"Target purpose  : {cfg.purpose}")
     print(f"Generation model: {cfg.generation.name}")
     print(f"Grading model   : {cfg.grading.name}")
@@ -315,47 +324,56 @@ def main(argv: list[str] | None = None) -> None:
 
         for i, case in enumerate(augmented, 1):
             strategy = case.metadata.get("strategy")
-            sev_tag  = f"[{case.severity.upper()}] " if case.severity else ""
+            sev_tag   = f"[{case.severity.upper()}] " if case.severity else ""
             strat_tag = f"[{strategy}] " if strategy else ""
             print(f"  [{i}] {sev_tag}{strat_tag}{case.prompt}")
 
-            response = target.generate(case.prompt)
-            if cfg.delay_ms:
-                time.sleep(cfg.delay_ms / 1000)
-            detector = get_detector(case.detector_id, cfg.grading)
-            result = detector.grade(
-                attack=case.prompt, response=response, purpose=cfg.purpose
-            )
+            # Run against every target (single loop when not multi-target)
+            for tgt in cfg.targets:
+                response = tgt.generate(case.prompt)
+                if cfg.delay_ms:
+                    time.sleep(cfg.delay_ms / 1000)
+                detector = get_detector(case.detector_id, cfg.grading)
+                result = detector.grade(
+                    attack=case.prompt, response=response, purpose=cfg.purpose
+                )
 
-            verdict = "RESISTED " if result.passed else "VULNERABLE"
-            print(f"       {verdict}  {result.reason}\n")
+                verdict = "RESISTED " if result.passed else "VULNERABLE"
+                if is_multi:
+                    print(f"       {tgt.name:<25} → {verdict}  {result.reason}")
+                else:
+                    print(f"       {verdict}  {result.reason}")
 
-            all_records.append({
-                "run_id":           run_id,
-                "timestamp":        _now(),
-                "plugin_id":        case.plugin_id,
-                "detector_id":      case.detector_id,
-                "frameworks":       case.frameworks or None,
-                "controls":        case.controls or None,
-                "severity":         case.severity or None,
-                "strategy":         strategy,
-                "attack":           case.prompt,
-                "original_prompt":  case.metadata.get("original_prompt"),
-                "response":         response,
-                "passed":           result.passed,
-                "score":            result.score,
-                "reason":           result.reason,
-                "purpose":          cfg.purpose,
-                "generation_model": cfg.generation.name,
-                "grading_model":    cfg.grading.name,
-            })
+                all_records.append({
+                    "run_id":           run_id,
+                    "timestamp":        _now(),
+                    "target":           tgt.name,
+                    "plugin_id":        case.plugin_id,
+                    "detector_id":      case.detector_id,
+                    "frameworks":       case.frameworks or None,
+                    "controls":         case.controls or None,
+                    "severity":         case.severity or None,
+                    "strategy":         strategy,
+                    "attack":           case.prompt,
+                    "original_prompt":  case.metadata.get("original_prompt"),
+                    "response":         response,
+                    "passed":           result.passed,
+                    "score":            result.score,
+                    "reason":           result.reason,
+                    "purpose":          cfg.purpose,
+                    "generation_model": cfg.generation.name,
+                    "grading_model":    cfg.grading.name,
+                })
 
-            total += 1
-            by_plugin[plugin.id]["total"] += 1
-            by_plugin[plugin.id].setdefault("severity", case.severity or "")
-            if not result.passed:
-                vulnerable += 1
-                by_plugin[plugin.id]["vulnerable"] += 1
+                total += 1
+                by_plugin[plugin.id]["total"] += 1
+                by_plugin[plugin.id].setdefault("severity", case.severity or "")
+                if not result.passed:
+                    vulnerable += 1
+                    by_plugin[plugin.id]["vulnerable"] += 1
+
+            if is_multi:
+                print()   # blank line between attacks in multi-target mode
 
         print()
 
@@ -375,6 +393,18 @@ def main(argv: list[str] | None = None) -> None:
         t = counts["total"]
         counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
 
+    # by_target — per-target pass/fail breakdown (most useful in multi-target runs)
+    by_target: dict[str, dict] = {}
+    for rec in all_records:
+        tgt_name = rec.get("target", "default")
+        bucket = by_target.setdefault(tgt_name, {"total": 0, "vulnerable": 0})
+        bucket["total"] += 1
+        if not rec["passed"]:
+            bucket["vulnerable"] += 1
+    for counts in by_target.values():
+        t = counts["total"]
+        counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
+
     summary = {
         "run_id":       run_id,
         "timestamp":    _now(),
@@ -384,6 +414,7 @@ def main(argv: list[str] | None = None) -> None:
         "pass_rate":    round((total - vulnerable) / total, 3) if total else 0.0,
         "by_plugin":    by_plugin,
         "by_framework": by_framework or None,
+        "by_target":    by_target if is_multi else None,
     }
 
     # --- write output ---------------------------------------------------------
@@ -428,6 +459,13 @@ def main(argv: list[str] | None = None) -> None:
         print("\nBy framework:")
         for fw, b in by_framework.items():
             print(f"  {fw:<20}  {b['vulnerable']}/{b['total']} vulnerable")
+
+    if is_multi:
+        print("\nBy target (comparison):")
+        col = max(len(n) for n in by_target) + 2
+        for tgt_name, b in by_target.items():
+            bar = "█" * b["vulnerable"] + "░" * (b["total"] - b["vulnerable"])
+            print(f"  {tgt_name:<{col}} {bar}  {b['vulnerable']}/{b['total']} vulnerable  ({b['pass_rate']:.0%} resisted)")
 
     print(f"\nResults → {out_file}")
 
