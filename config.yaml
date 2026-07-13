@@ -5,7 +5,7 @@
 #   generation -> plugins/generators.py  (the model that AUTHORS attacks)
 #   grading    -> detectors/             (the model that JUDGES responses)
 #   target     -> plugin + detector      (the purpose of the system under test)
-#   num_generations / plugins -> which plugins run and how many attacks each.
+#   num_tests / plugins -> which plugins run and how many attacks each.
 
 # Model that authors the adversarial prompts.
 generation:
@@ -126,8 +126,16 @@ target:
 #     type: function
 #     name: my_module#invoke
 
+# ── Prompts cache ─────────────────────────────────────────────────────────────
+# Save generated prompts (post-strategy) to a JSONL file after this run.
+# On the next run, pass the same file to load_prompts to skip regeneration.
+# CLI equivalent: --save-prompts / --load-prompts  (CLI flag takes priority)
+#
+# save_prompts: prompts.jsonl
+# load_prompts: prompts.jsonl
+
 # How many adversarial prompts each plugin should generate (global default).
-num_generations: 1
+num_tests: 1
 
 # Optional global generation settings (all can also be overridden per-plugin).
 #
@@ -144,11 +152,11 @@ num_generations: 1
 
 # Which plugins to run. Three forms are supported:
 #
-# 1. String — plugin id or category key (uses global num_generations, no extras):
+# 1. String — plugin id or category key (uses global num_tests, no extras):
 #      - prompt-injection
 #      - security          # expands to all 9 security sub-plugins
 #
-# 2. Dict with `id` — per-plugin overrides:
+# 2. Dict with `id` — per-plugin overrides (LLM generation):
 #      - id: sql-injection
 #        num_tests: 10               # override attacks for this plugin only
 #        severity: critical          # critical | high | medium | low
@@ -157,6 +165,14 @@ num_generations: 1
 #          1; DROP TABLE users;--
 #        generation_instructions: |  # extra guidance for this plugin only
 #          Target the product search and order lookup endpoints.
+#
+#    Add `dataset:` to skip LLM generation and use a static file instead:
+#      - id: sql-injection           # routes to sql-injection detector automatically
+#        dataset: datasets/my_sql_prompts.csv
+#        column: prompt              # column containing the prompt text (default: first col)
+#        count: 50                   # number of prompts to use
+#        severity: critical          # override default severity (default: per-plugin default)
+#        sample: true                # random sample if file > count
 #
 #    A category key in `id` applies the overrides to all sub-plugins:
 #      - id: security
@@ -169,7 +185,8 @@ num_generations: 1
 #        category_column: category   # per-row taxonomy id (optional)
 #        detector: prompt-injection  # grader for rows lacking a category
 #        id: harmbench               # optional label (default: "dataset")
-#        count: 100                  # sample size (overrides num_generations)
+#        count: 100                  # sample size (overrides num_tests)
+#        severity: high              # override default severity for all rows in this file
 #        sample: true                # random sample if file > count
 #
 # Compliance frameworks — expand to a curated bundle of relevant plugins:
@@ -242,4 +259,4 @@ strategies:
 #  #   column: prompt                    # column/key containing the prompt text
 #  #   detector: prompt-injection        # which grader to route results to
 #  #   id: harmbench                     # optional label (default: "dataset")
-#  #   sample: true                      # random sample if file > num_generations (default: true)
+#  #   sample: true                      # random sample if file > num_tests (default: true)

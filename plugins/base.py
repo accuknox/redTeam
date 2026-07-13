@@ -171,9 +171,7 @@ class RedteamPlugin(ABC):
             while len(cases) < self.num_tests and attempts < self.max_attempts:
                 attempts += 1
                 remaining = self.num_tests - len(cases)
-                print(f">>>>>>>>>>>>>>>>>>>>>>>>>> {self.generator}, {type(self.generator)}, {self._render(remaining)}")
                 raw = self.generator.complete(self._render(remaining))
-                print(f"<<<<<<<<<<<<<<<<<<<<<<<<<<< {raw}")
                 for prompt in self._parse(raw):
                     key = prompt.strip().lower()
                     if not key or key in seen or is_basic_refusal(prompt):
@@ -231,7 +229,7 @@ class RedteamPlugin(ABC):
         return [line.strip() for line in raw.splitlines() if line.strip()]
 
     def _build_test_case(self, prompt: str) -> TestCase:
-        from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS  # deferred — avoids circular import
+        from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS, PLUGIN_SEVERITY  # deferred — avoids circular import
         if self.max_chars and len(prompt) > self.max_chars:
             prompt = prompt[: self.max_chars]
         return TestCase(
@@ -239,7 +237,7 @@ class RedteamPlugin(ABC):
             plugin_id=self.id,
             detector_id=self.detector_id or self.id,
             metadata={"purpose": self.purpose, "plugin_config": self.config},
-            severity=self.severity,
+            severity=self.severity or PLUGIN_SEVERITY.get(self.id, ""),
             frameworks=PLUGIN_FRAMEWORKS.get(self.id, []),
             controls=PLUGIN_CONTROLS.get(self.id, []),
         )
@@ -339,15 +337,16 @@ class DatasetPlugin:
         purpose: str,
         column: str | None = None,
         category_column: str | None = "category",
-        num_tests: int = 5,
+        num_tests: int | None = None,
         plugin_id: str = "dataset",
+        severity: str = "",
         sample: bool = True,
         seed: int | None = None,
     ) -> None:
         self.id = plugin_id
         self.detector_id = detector_id
         self.purpose = purpose
-        self.num_tests = num_tests
+        self.severity = severity
         self.sample = sample
 
         path = Path(dataset_path)
@@ -356,10 +355,12 @@ class DatasetPlugin:
         self._rows = _load_rows(path, column, category_column)
         if not self._rows:
             raise ValueError(f"dataset is empty: {path}")
+        # None means "use the whole file"
+        self.num_tests = num_tests if num_tests is not None else len(self._rows)
         self._rng = random.Random(seed)
 
     def generate_tests(self) -> list[TestCase]:
-        from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS  # deferred — avoids circular import
+        from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS, PLUGIN_SEVERITY  # deferred — avoids circular import
         if self.sample and len(self._rows) > self.num_tests:
             selected = self._rng.sample(self._rows, self.num_tests)
         else:
@@ -379,6 +380,7 @@ class DatasetPlugin:
                         "source": "dataset",
                         "dataset_id": self.id,
                     },
+                    severity=self.severity or PLUGIN_SEVERITY.get(plugin_id, ""),
                     frameworks=PLUGIN_FRAMEWORKS.get(plugin_id, []),
                     controls=PLUGIN_CONTROLS.get(plugin_id, []),
                 )

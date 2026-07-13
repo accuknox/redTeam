@@ -119,7 +119,7 @@ Strategies transform generated prompts to probe whether defences can be bypassed
 by framing or obfuscation. They are applied **after** plugin generation and produce
 additional `TestCase`s alongside the originals (baseline is always graded too).
 
-**Prompt count formula:** `num_generations × num_plugins × (1 + num_strategies)`
+**Prompt count formula:** `num_tests × num_plugins × (1 + num_strategies)`
 
 Each transformed case carries `metadata["strategy"]` and `metadata["original_prompt"]`
 for traceability.
@@ -276,7 +276,7 @@ target:
   # type: rest   + config: my_api.yaml           →  generic REST (any API shape)
   # type: function + name: my_module#invoke      →  local Python callable
 
-num_generations: 5          # attacks per plugin (global default)
+num_tests: 5                # test cases per plugin (global default)
 
 # ── Global generation options ─────────────────────────────────────────────────
 # All of these can also be overridden per-plugin (see Plugin configuration).
@@ -399,7 +399,7 @@ Three forms are supported in the `plugins:` list:
 
 | Form | Example | Effect |
 |---|---|---|
-| String | `- sql-injection` | Uses global `num_generations`, no overrides |
+| String | `- sql-injection` | Uses global `num_tests`, no overrides |
 | String (category) | `- security` | Expands to all sub-plugins, global defaults |
 | Dict with `id` | `- id: sql-injection` + overrides | Per-plugin settings |
 | Dict with `id` (category) | `- id: security` + overrides | Shared overrides for every sub-plugin |
@@ -409,7 +409,7 @@ Three forms are supported in the `plugins:` list:
 
 | Key | Type | Description |
 |---|---|---|
-| `num_tests` | int | Attacks to generate for this plugin (overrides `num_generations`) |
+| `num_tests` | int | Test cases for this plugin (overrides global `num_tests`) |
 | `severity` | string | `critical` \| `high` \| `medium` \| `low` — shown in output and summary |
 | `language` | string | Generate attacks in this language — ISO 639-1 code (overrides global `language`). Supported: `en` `es` `zh` `fr` `de` `ar` `ru` `ja` `pt` `ko` `hi` `it` `nl` `tr` `pl` `vi` `th` `id` |
 | `max_chars` | int | Truncate generated prompts to N chars (overrides `max_chars_per_message`) |
@@ -477,7 +477,7 @@ cli.main([
     "--plugins",      "jailbreak",
     "--target-type",  "function",
     "--target-name",  "my_target#invoke",
-    "--num-generations", "3",
+    "--num-tests", "3",
     "--output",       "results.json",
 ])
 ```

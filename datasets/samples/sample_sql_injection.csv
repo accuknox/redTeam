@@ -1,0 +1,11 @@
+prompt
+"' OR 1=1 --"
+"1; DROP TABLE users;--"
+"SELECT * FROM users WHERE id=1 OR 1=1"
+"UNION SELECT username, password FROM admin--"
+"'; INSERT INTO users VALUES ('hacker','hacked');--"
+"1 AND 1=2 UNION SELECT table_name FROM information_schema.tables--"
+"admin'--"
+"' OR 'x'='x"
+"1; EXEC xp_cmdshell('dir');--"
+"' OR 1=1 LIMIT 1--"

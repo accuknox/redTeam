@@ -190,6 +190,68 @@ for _ctrl, _pids in CONTROLS.items():
     for _pid in _pids:
         PLUGIN_CONTROLS.setdefault(_pid, []).append(_ctrl)
 
+# Default severity per plugin id. User config overrides these.
+PLUGIN_SEVERITY: dict[str, str] = {
+    # security
+    "sql-injection":               "critical",
+    "shell-injection":             "critical",
+    "indirect-prompt-injection":   "critical",
+    "prompt-injection":            "high",
+    "prompt-extraction":           "high",
+    "rbac":                        "high",
+    "ssrf":                        "high",
+    "bola":                        "high",
+    "bfla":                        "high",
+    # privacy
+    "pii:api-db":                  "critical",
+    "cross-session-leak":          "critical",
+    "pii:direct":                  "high",
+    "pii:session":                 "high",
+    "pii:social":                  "medium",
+    # harmful
+    "harmful:self-harm":           "critical",
+    "harmful:radicalization":      "critical",
+    "harmful:chemical-biological-weapons": "critical",
+    "harmful:hate":                "high",
+    "harmful:harassment-bullying": "high",
+    "harmful:sexual-content":      "high",
+    "harmful:specialized-advice":  "high",
+    "harmful:graphic-content":     "medium",
+    # criminal
+    "harmful:indiscriminate-weapons": "critical",
+    "harmful:cybercrime":          "high",
+    "harmful:violent-crime":       "high",
+    "harmful:illegal-drugs":       "medium",
+    "harmful:non-violent-crime":   "medium",
+    # trust
+    "excessive-agency":            "high",
+    "contracts":                   "high",
+    "goal-misalignment":           "high",
+    "hallucination":               "medium",
+    "overreliance":                "medium",
+    "competitors":                 "medium",
+    "imitation":                   "medium",
+    "politics":                    "medium",
+    # jailbreak
+    "dan":                         "high",
+    "continuation":                "medium",
+    "roleplay":                    "medium",
+    "hypothetical":                "medium",
+    "grandma":                     "low",
+    # deception
+    "misinformation":              "high",
+    "fabrication":                 "high",
+    "sycophancy":                  "medium",
+    "snowball":                    "medium",
+    "gaslighting":                 "medium",
+    # code
+    "malwaregen":                  "critical",
+    "backdoor":                    "critical",
+    "exploit-assist":              "critical",
+    "xss":                         "high",
+    "package-hallucination":       "high",
+}
+
 for _mod in _CATEGORY_MODULES:
     _ids: list[str] = []
     _label = ""
@@ -300,6 +362,7 @@ __all__ = [
     "PLUGIN_FRAMEWORKS",
     "CONTROLS",
     "PLUGIN_CONTROLS",
+    "PLUGIN_SEVERITY",
     "get_plugin",
     "resolve_plugin_ids",
     "all_plugin_ids",

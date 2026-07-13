@@ -56,7 +56,7 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
     print(f"Target purpose  : {cfg.purpose}")
     print(f"Generation model: {cfg.generation.name}")
     print(f"Grading model   : {cfg.grading.name}")
-    print(f"Generations/plugin: {cfg.num_generations}")
+    print(f"Tests/plugin      : {cfg.num_tests}")
     print(f"Concurrency     : {cfg.concurrency}")
     if cfg.strategies:
         print(f"Strategies      : {', '.join(s.id for s in cfg.strategies)}")

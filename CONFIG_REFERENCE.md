@@ -17,7 +17,7 @@ target:  { ... }             # one model
 targets: [ ... ]             # multiple models — A/B comparison
 
 # Run settings:
-num_generations: 5
+num_tests: 5
 language: en
 max_chars_per_message: 500
 delay: 200
@@ -272,7 +272,7 @@ Each entry supports all the same parameters as `target:` plus one extra:
 Applied to every plugin unless overridden at the plugin level.
 
 ```yaml
-num_generations: 5
+num_tests: 5
 language: zh
 max_chars_per_message: 500
 delay: 200
@@ -283,12 +283,55 @@ generation_instructions: |
 
 | Parameter | Type | Default | Description | Example |
 |---|---|---|---|---|
-| `num_generations` | int | `5` | Attacks each plugin generates. Total cases = `num_generations × plugins × (1 + strategies)`. | `10` |
+| `num_tests` | int | `5` | Attacks each plugin generates. Total cases = `num_tests × plugins × (1 + strategies)`. | `10` |
 | `language` | string | `en` | Generate attacks in this language. ISO 639-1 code. Supported: `en es zh fr de ar ru ja pt ko hi it nl tr pl vi th id` | `zh` |
 | `max_chars_per_message` | int | — | Truncate all generated prompts to N characters. | `500` |
 | `delay` | int | `0` | Milliseconds to wait between target API calls. Use this to avoid rate-limit errors. | `200` |
 | `concurrency` | int | `1` | Parallel target API calls. Combine with `delay` for throughput tuning. | `4` |
 | `generation_instructions` | string | — | Extra guidance appended to every plugin's meta-prompt. Use to focus attacks on your domain. | `"Target the payment and checkout flow."` |
+
+---
+
+## `save_prompts` / `load_prompts` — prompts cache
+
+Generate prompts once, reuse them across many target runs. Avoids paying generation API costs on every run.
+
+```yaml
+save_prompts: prompts.jsonl   # write generated prompts (post-strategy) to this file
+load_prompts: prompts.jsonl   # load prompts from this file on next run
+```
+
+| Parameter | Type | Default | Description | Example |
+|---|---|---|---|---|
+| `save_prompts` | string | — | Path to write the prompts JSONL file after generation + strategy application. Written before the target is hit — prompts are saved even if grading fails. | `prompts.jsonl` |
+| `load_prompts` | string | — | Path to read cached prompts from. For each plugin: uses cached prompts and tops up to `num_tests` if the file has fewer. Applies only strategies not already represented in the file. | `prompts.jsonl` |
+
+**Priority:** CLI flags (`--save-prompts`, `--load-prompts`) take priority over config file values.
+
+**Prompts file format** (JSONL):
+
+```jsonl
+{"_knox_rt_version": "1.0", "_generated_at": "2026-07-13T...", "_purpose": "A bookstore chatbot.", "_strategies": ["base64"]}
+{"plugin_id": "sql-injection", "detector_id": "sql-injection", "severity": "critical", "frameworks": ["owasp:llm"], "controls": ["owasp:llm:01"], "prompt": "...", "metadata": {"strategy": null, ...}}
+{"plugin_id": "sql-injection", "detector_id": "sql-injection", "severity": "critical", "frameworks": ["owasp:llm"], "controls": ["owasp:llm:01"], "prompt": "base64...", "metadata": {"strategy": "base64", "original_prompt": "...", ...}}
+```
+
+- First line: metadata header (`_knox_rt_version`, `_generated_at`, `_purpose`, `_strategies`)
+- Remaining lines: one `TestCase` per line — includes all fields needed to reconstruct it exactly
+- Strategies already applied are recorded in `metadata.strategy` — so the next run applies only missing ones
+
+**CLI equivalents:**
+
+```bash
+# Generate and save prompts alongside results
+knox-rt -c config.yaml --save-prompts prompts.jsonl
+
+# Load cached prompts, top up if needed, run against a new target
+knox-rt --load-prompts prompts.jsonl -t openai --target-name gpt-4o --target-api-key sk-...
+
+# Merge: use cached sql-injection, generate fresh dan, save combined file
+knox-rt -c config.yaml --load-prompts prompts.jsonl --save-prompts prompts.jsonl --plugins sql-injection,dan
+```
 
 ---
 
@@ -313,7 +356,7 @@ Available framework keys: `owasp:llm`, `owasp:api`, `nist:ai:rmf`, `mitre:atlas`
 
 ---
 
-### Form 2 — dict with `id` (per-plugin overrides)
+### Form 2 — dict with `id` (per-plugin overrides, LLM generation)
 
 ```yaml
 plugins:
@@ -332,16 +375,41 @@ plugins:
 | Parameter | Type | Default | Description | Example |
 |---|---|---|---|---|
 | `id` | string | **required** | Plugin id, category key, or framework key. When a category/framework key is used, all overrides apply to every plugin in the group. | `sql-injection` \| `security` \| `owasp:llm` |
-| `num_tests` | int | `num_generations` | Attacks for this plugin only. | `10` |
-| `severity` | string | — | Risk label in output and summary. | `critical` \| `high` \| `medium` \| `low` |
+| `num_tests` | int | `num_tests` | Attacks for this plugin only. | `10` |
+| `severity` | string | per-plugin default | Risk label in output and summary. Each plugin has a built-in default (`critical` for RCE/injection, `high` for most security/privacy, `medium` for trust/jailbreak). Providing this key overrides the default. | `critical` \| `high` \| `medium` \| `low` |
 | `language` | string | global `language` | Language for this plugin's attacks only. | `en` |
 | `max_chars` | int | global `max_chars_per_message` | Truncate this plugin's prompts to N chars. | `300` |
 | `examples` | string | — | Seed examples injected into the meta-prompt to guide attack style. | `"' OR 1=1 --"` |
 | `generation_instructions` | string | global `generation_instructions` | Extra guidance for this plugin's meta-prompt only. | `"Focus on admin endpoints."` |
 
+#### Per-plugin static dataset — add `dataset:` to skip LLM generation
+
+Add `dataset:` to any `id:` entry to use a file instead of calling the generation LLM. The `id` value automatically routes results to the correct detector — no separate `detector:` key needed.
+
+```yaml
+plugins:
+  - id: sql-injection           # routes to sql-injection detector automatically
+    dataset: datasets/my_sql_prompts.csv
+    column: prompt
+    count: 50
+    sample: true
+
+  - id: prompt-injection        # no dataset → generates via LLM as usual
+    num_tests: 5
+    severity: high
+```
+
+| Parameter | Type | Default | Description | Example |
+|---|---|---|---|---|
+| `dataset` | string | — | Path to file. Adding this key switches the plugin from LLM generation to file loading. Formats: `.csv`, `.json`, `.jsonl`, `.txt` | `datasets/my_sql.csv` |
+| `column` | string | first column | Column / key containing the prompt text. | `prompt` |
+| `count` | int | `num_tests` | Number of prompts to load. | `50` |
+| `severity` | string | per-plugin default | Override the default severity for all prompts loaded from this file. | `critical` |
+| `sample` | bool | `true` | Random sample when file has more rows than `count`. | `true` |
+
 ---
 
-### Form 3 — dict with `dataset` (static prompts from a file)
+### Form 3 — dict with `dataset` (external dataset, explicit detector routing)
 
 ```yaml
 plugins:
@@ -361,7 +429,8 @@ plugins:
 | `category_column` | string | `category` | Column / key with a per-row plugin or detector id. Rows without a value fall back to `detector`. | `category` |
 | `detector` | string | `prompt-injection` | Fallback detector for rows with no category value. | `sql-injection` |
 | `id` | string | `dataset` | Label shown in output and summary for rows from this file. | `harmbench` |
-| `count` | int | `num_generations` | Number of prompts to use. | `100` |
+| `count` | int | `num_tests` | Number of prompts to use. | `100` |
+| `severity` | string | per-plugin default | Override default severity for all rows in this file. When `category_column` is set, the per-row plugin id is used to look up the default; this key overrides that for every row. | `high` |
 | `sample` | bool | `true` | `true` = random sample when file has more rows than `count`. `false` = take the first N rows. | `true` |
 
 ---
