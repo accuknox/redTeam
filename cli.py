@@ -8,7 +8,7 @@ Usage
     knox-rt --list-plugins
     knox-rt --list-strategies
     knox-rt --plugins prompt-injection --strategies base64,fiction
-    knox-rt --plugins jailbreak,code --num-generations 3 -o run1.json
+    knox-rt --plugins jailbreak,code --num-tests 3 -o run1.json
     knox-rt --config custom.yaml --format jsonl
 
     # or without installing:
@@ -77,8 +77,8 @@ examples:
         help="comma-separated strategy ids (overrides config)",
     )
     run.add_argument(
-        "--num-generations", "-n", type=int, default=None, metavar="N",
-        help="attacks per plugin (overrides config)",
+        "--num-tests", "-n", type=int, default=None, metavar="N",
+        help="test cases per plugin (overrides config)",
     )
     run.add_argument(
         "--purpose", default=None, metavar="TEXT",
@@ -132,6 +132,16 @@ examples:
         help="output format — json (single file) or jsonl (one record per line) [default: json]",
     )
 
+    cache = p.add_argument_group("prompts cache")
+    cache.add_argument(
+        "--save-prompts", default=None, metavar="PATH",
+        help="save generated prompts (post-strategy) to a JSONL file for reuse across runs",
+    )
+    cache.add_argument(
+        "--load-prompts", default=None, metavar="PATH",
+        help="load prompts from a saved JSONL file; skips generation for cached plugins/strategies, tops up missing ones",
+    )
+
     return p
 
 
@@ -173,8 +183,73 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _run_plugin(plugin):
-    return plugin, plugin.generate_tests()
+def _tc_to_dict(tc) -> dict:
+    return {
+        "plugin_id":   tc.plugin_id,
+        "detector_id": tc.detector_id,
+        "severity":    tc.severity,
+        "frameworks":  tc.frameworks,
+        "controls":    tc.controls,
+        "prompt":      tc.prompt,
+        "metadata":    tc.metadata,
+    }
+
+
+def _dict_to_tc(d: dict):
+    from plugins.base import TestCase
+    return TestCase(
+        prompt=d["prompt"],
+        plugin_id=d["plugin_id"],
+        detector_id=d["detector_id"],
+        severity=d.get("severity", ""),
+        frameworks=d.get("frameworks", []),
+        controls=d.get("controls", []),
+        metadata=d.get("metadata", {}),
+    )
+
+
+def _load_prompts(path: Path) -> tuple[dict, list]:
+    header: dict = {}
+    cases: list = []
+    for i, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
+        raw = raw.strip()
+        if not raw:
+            continue
+        obj = json.loads(raw)
+        if i == 0 and "_knox_rt_version" in obj:
+            header = obj
+        else:
+            cases.append(_dict_to_tc(obj))
+    return header, cases
+
+
+def _save_prompts(path: Path, purpose: str, strategy_ids: list[str], cases: list) -> None:
+    header = {
+        "_knox_rt_version": "1.0",
+        "_generated_at":    _now(),
+        "_purpose":         purpose,
+        "_strategies":      strategy_ids,
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(header) + "\n")
+        for tc in cases:
+            f.write(json.dumps(_tc_to_dict(tc)) + "\n")
+    tmp.rename(path)
+
+
+def _run_plugin_with_topup(plugin, file_base: list) -> tuple:
+    shortfall = max(0, plugin.num_tests - len(file_base))
+    if shortfall > 0:
+        orig = plugin.num_tests
+        plugin.num_tests = shortfall
+        try:
+            new_cases = plugin.generate_tests()
+        finally:
+            plugin.num_tests = orig
+    else:
+        new_cases = []
+    return plugin, file_base + new_cases
 
 
 # --------------------------------------------------------------------------- #
@@ -198,8 +273,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.purpose:
         cfg.purpose = args.purpose
-    if args.num_generations:
-        cfg.num_generations = args.num_generations
+    if args.num_tests:
+        cfg.num_tests = args.num_tests
     if args.concurrency:
         cfg.concurrency = args.concurrency
 
@@ -208,7 +283,7 @@ def main(argv: list[str] | None = None) -> None:
         plugin_ids = resolve_plugin_ids(entries)
         cfg.plugins = [
             get_plugin(pid, cfg.generation, cfg.purpose,
-                       num_tests=cfg.num_generations, concurrency=cfg.concurrency)
+                       num_tests=cfg.num_tests, concurrency=cfg.concurrency)
             for pid in plugin_ids
         ]
 
@@ -266,6 +341,26 @@ def main(argv: list[str] | None = None) -> None:
 
     is_multi = len(cfg.targets) > 1
 
+    # CLI flag takes priority over config file value for both prompts flags.
+    save_prompts_path = args.save_prompts or cfg.save_prompts
+    load_prompts_path = args.load_prompts or cfg.load_prompts
+
+    # --- load prompts from file -----------------------------------------------
+    # file_cases: plugin_id → all TestCases in the file (base + strategy variants)
+    file_cases: dict[str, list] = {}
+    file_header: dict = {}
+    if load_prompts_path:
+        load_path = Path(load_prompts_path)
+        if not load_path.exists():
+            parser.error(f"--load-prompts: file not found: {load_path}")
+        file_header, loaded_cases = _load_prompts(load_path)
+        for tc in loaded_cases:
+            file_cases.setdefault(tc.plugin_id, []).append(tc)
+        if file_header.get("_purpose") and file_header["_purpose"] != cfg.purpose:
+            print(f"WARNING: prompts were generated for a different purpose:\n"
+                  f"  file:    {file_header['_purpose']!r}\n"
+                  f"  current: {cfg.purpose!r}\n")
+
     # --- output path ----------------------------------------------------------
     fmt = args.format
     out_file = Path(args.output) if args.output else Path(
@@ -285,22 +380,63 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Target purpose  : {cfg.purpose}")
     print(f"Generation model: {cfg.generation.name}")
     print(f"Grading model   : {cfg.grading.name}")
-    print(f"Generations/plugin: {cfg.num_generations}")
+    print(f"Tests/plugin      : {cfg.num_tests}")
     print(f"Concurrency     : {cfg.concurrency}")
     if cfg.strategies:
         print(f"Strategies      : {', '.join(s.id for s in cfg.strategies)}")
+    if load_prompts_path:
+        print(f"Load prompts    : {load_prompts_path}")
+    if save_prompts_path:
+        print(f"Save prompts    : {save_prompts_path}")
     print()
 
-    # --- generate attacks -----------------------------------------------------
+    # --- generate attacks (top-up from file where available) ------------------
+    # file_base: base prompts (strategy=null) already saved for this plugin
+    # _run_plugin_with_topup generates only the shortfall to reach num_tests
     all_plugin_results: list[tuple] = []
     if cfg.concurrency <= 1:
         for plugin in cfg.plugins:
-            all_plugin_results.append(_run_plugin(plugin))
+            file_base = [tc for tc in file_cases.get(plugin.id, [])
+                         if not tc.metadata.get("strategy")]
+            all_plugin_results.append(_run_plugin_with_topup(plugin, file_base))
     else:
         with ThreadPoolExecutor(max_workers=cfg.concurrency) as pool:
-            futures = {pool.submit(_run_plugin, pl): pl for pl in cfg.plugins}
+            futures = {
+                pool.submit(
+                    _run_plugin_with_topup,
+                    pl,
+                    [tc for tc in file_cases.get(pl.id, []) if not tc.metadata.get("strategy")],
+                ): pl
+                for pl in cfg.plugins
+            }
             for future in as_completed(futures):
                 all_plugin_results.append(future.result())
+
+    # --- build final case lists (apply only strategies missing from file) -----
+    # For each plugin:
+    #   file_strat  = strategy variants already saved in the file
+    #   done        = strategy ids already represented in the file
+    #   missing     = config strategies not yet in the file → apply fresh
+    #   final_cases = base + file_strat + newly applied variants  (union)
+    all_save_cases: list = []
+    final_batches: list[tuple] = []   # (plugin, base_cases, final_cases)
+
+    for plugin, base_cases in all_plugin_results:
+        file_strat = [tc for tc in file_cases.get(plugin.id, [])
+                      if tc.metadata.get("strategy")]
+        done = {tc.metadata["strategy"] for tc in file_strat}
+        missing = [s for s in cfg.strategies if s.id not in done]
+        # apply_strategies returns originals + augmented; use it as the full list.
+        all_strat = apply_strategies(base_cases, missing, cfg.generation) if missing else base_cases
+        final_cases = all_strat + file_strat
+        final_batches.append((plugin, base_cases, final_cases))
+        all_save_cases.extend(final_cases)
+
+    # --- save prompts file (before hitting the target) -----------------------
+    if save_prompts_path:
+        save_path = Path(save_prompts_path)
+        _save_prompts(save_path, cfg.purpose, [s.id for s in cfg.strategies], all_save_cases)
+        print(f"Prompts  → {save_path}")
 
     # --- attack + grade -------------------------------------------------------
     all_records: list[dict] = []
@@ -308,17 +444,12 @@ def main(argv: list[str] | None = None) -> None:
     vulnerable = 0
     by_plugin: dict[str, dict] = {}
 
-    for plugin, test_cases in all_plugin_results:
-        augmented = (
-            apply_strategies(test_cases, cfg.strategies, cfg.generation)
-            if cfg.strategies else test_cases
-        )
-        strategy_note = (
-            f", {len(augmented) - len(test_cases)} strategy-augmented"
-            if cfg.strategies else ""
-        )
+    for plugin, base_cases, final_cases in final_batches:
+        n_strat = len(final_cases) - len(base_cases)
+        strategy_note = f", {n_strat} strategy-augmented" if n_strat else ""
+        augmented = final_cases
         print(f"=== {plugin.id} ===")
-        print(f"{len(test_cases)} base attack(s){strategy_note} → {len(augmented)} total\n")
+        print(f"{len(base_cases)} base attack(s){strategy_note} → {len(final_cases)} total\n")
 
         by_plugin[plugin.id] = {"total": 0, "vulnerable": 0}
 

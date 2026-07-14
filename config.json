@@ -46,7 +46,10 @@
     ]
   },
 
-  "num_generations": 1,
+  "save_prompts": null,
+  "load_prompts": null,
+
+  "num_tests": 1,
 
   "language": "en",
   "max_chars_per_message": 500,

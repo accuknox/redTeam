@@ -5,7 +5,7 @@ Reads `config.yaml` and distributes its values to the components that need them:
   * `generation` -> a `Generator` (plugins/generators.py) used to author attacks.
   * `grading`    -> a `Judge` (detectors/judge.py) used by detectors to evaluate
     responses (LLM-as-a-judge).
-  * `target.purpose`, `num_generations`, `plugins` -> the plugins, each wired
+  * `target.purpose`, `num_tests`, `plugins` -> the plugins, each wired
     with the generation model, the target purpose, and the generation count.
 
 `build_generator()` / `build_judge()` are the single places that map a
@@ -134,7 +134,7 @@ class RedTeamConfig:
     """Fully-wired run configuration."""
 
     purpose: str
-    num_generations: int
+    num_tests: int
     concurrency: int
     delay_ms: int
     generation: Generator
@@ -144,6 +144,8 @@ class RedTeamConfig:
     raw: dict[str, Any]
     target: Provider | None = None
     targets: list[Provider] = field(default_factory=list)  # all targets; len>1 = multi-target run
+    save_prompts: str | None = None   # path to write generated prompts JSONL
+    load_prompts: str | None = None   # path to read cached prompts JSONL
 
 
 def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
@@ -159,7 +161,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
     )
     if not purpose:
         raise ValueError("'purpose' is required — set it at the top level or under 'target:'")
-    num_generations = int(data.get("num_generations", 5))
+    num_tests = int(data.get("num_tests", data.get("num_generations", 5)))
     concurrency = int(data.get("concurrency", 1))
     delay_ms = int(data.get("delay", 0) or 0)
 
@@ -185,7 +187,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
             for pid in resolve_plugin_ids([entry]):
                 plugins.append(
                     get_plugin(pid, generation, purpose,
-                               num_tests=num_generations,
+                               num_tests=num_tests,
                                generation_instructions=global_instructions,
                                language=global_language,
                                max_chars=global_max_chars,
@@ -200,34 +202,50 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 purpose=purpose,
                 column=entry.get("column"),
                 category_column=entry.get("category_column", "category"),
-                # `count` overrides the global num_generations per dataset.
-                num_tests=int(entry.get("count", num_generations)),
+                # None → DatasetPlugin defaults to all rows in the file.
+                num_tests=int(c) if (c := entry.get("count", entry.get("num_tests"))) is not None else None,
                 plugin_id=entry.get("id", "dataset"),
+                severity=str(entry.get("severity", "")),
                 sample=entry.get("sample", True),
             ))
 
         elif isinstance(entry, dict) and "id" in entry:
-            # Dict form — per-plugin overrides.
-            # A category key in `id` expands to all its sub-plugins, each
-            # inheriting the same overrides.
             pid_or_cat = entry["id"]
-            per_num      = int(entry.get("num_tests", num_generations))
-            per_sev      = str(entry.get("severity", ""))
-            per_ex       = str(entry.get("examples", ""))
-            per_instr    = str(entry.get("generation_instructions", global_instructions))
-            per_lang     = str(entry.get("language", global_language))
-            per_max_chars = int(entry.get("max_chars", global_max_chars) or 0)
-            for pid in resolve_plugin_ids([pid_or_cat]):
-                plugins.append(
-                    get_plugin(pid, generation, purpose,
-                               num_tests=per_num,
-                               severity=per_sev,
-                               examples=per_ex or None,
-                               generation_instructions=per_instr,
-                               language=per_lang,
-                               max_chars=per_max_chars,
-                               concurrency=concurrency)
-                )
+
+            if "dataset" in entry:
+                # Per-plugin static dataset — skip LLM generation, use the file instead.
+                # `id` doubles as both plugin_id and detector_id so grading is automatic.
+                plugins.append(DatasetPlugin(
+                    dataset_path=entry["dataset"],
+                    detector_id=pid_or_cat,
+                    purpose=purpose,
+                    column=entry.get("column"),
+                    category_column=entry.get("category_column", "category"),
+                    num_tests=int(c) if (c := entry.get("count", entry.get("num_tests"))) is not None else None,
+                    plugin_id=pid_or_cat,
+                    severity=str(entry.get("severity", "")),
+                    sample=entry.get("sample", True),
+                ))
+            else:
+                # LLM generation — per-plugin overrides.
+                # A category/framework key in `id` expands to all its sub-plugins.
+                per_num       = int(entry.get("num_tests", num_tests))
+                per_sev       = str(entry.get("severity", ""))
+                per_ex        = str(entry.get("examples", ""))
+                per_instr     = str(entry.get("generation_instructions", global_instructions))
+                per_lang      = str(entry.get("language", global_language))
+                per_max_chars = int(entry.get("max_chars", global_max_chars) or 0)
+                for pid in resolve_plugin_ids([pid_or_cat]):
+                    plugins.append(
+                        get_plugin(pid, generation, purpose,
+                                   num_tests=per_num,
+                                   severity=per_sev,
+                                   examples=per_ex or None,
+                                   generation_instructions=per_instr,
+                                   language=per_lang,
+                                   max_chars=per_max_chars,
+                                   concurrency=concurrency)
+                    )
 
     strategies: list[Strategy] = [
         get_strategy(s) for s in data.get("strategies", [])
@@ -257,7 +275,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
 
     return RedTeamConfig(
         purpose=purpose,
-        num_generations=num_generations,
+        num_tests=num_tests,
         concurrency=concurrency,
         delay_ms=delay_ms,
         generation=generation,
@@ -267,4 +285,6 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         raw=data,
         target=target,
         targets=targets,
+        save_prompts=data.get("save_prompts") or None,
+        load_prompts=data.get("load_prompts") or None,
     )
