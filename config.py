@@ -172,6 +172,8 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
     global_instructions: str = data.get("generation_instructions", "") or ""
     global_language: str = data.get("language", "") or ""
     global_max_chars: int = int(data.get("max_chars_per_message", 0) or 0)
+    global_severity: str = str(data.get("severity", "") or "")
+    global_examples: str = str(data.get("examples", "") or "")
 
     # `plugins` entries may be:
     #   - a string: plugin id or category key (expanded to all sub-plugins)
@@ -188,6 +190,8 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 plugins.append(
                     get_plugin(pid, generation, purpose,
                                num_tests=num_tests,
+                               severity=global_severity,
+                               examples=global_examples or None,
                                generation_instructions=global_instructions,
                                language=global_language,
                                max_chars=global_max_chars,
@@ -228,24 +232,48 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 ))
             else:
                 # LLM generation — per-plugin overrides.
-                # A category/framework key in `id` expands to all its sub-plugins.
                 per_num       = int(entry.get("num_tests", num_tests))
-                per_sev       = str(entry.get("severity", ""))
-                per_ex        = str(entry.get("examples", ""))
+                per_sev       = str(entry.get("severity", global_severity))
+                per_ex        = str(entry.get("examples", global_examples))
                 per_instr     = str(entry.get("generation_instructions", global_instructions))
                 per_lang      = str(entry.get("language", global_language))
                 per_max_chars = int(entry.get("max_chars", global_max_chars) or 0)
-                for pid in resolve_plugin_ids([pid_or_cat]):
-                    plugins.append(
-                        get_plugin(pid, generation, purpose,
-                                   num_tests=per_num,
-                                   severity=per_sev,
-                                   examples=per_ex or None,
-                                   generation_instructions=per_instr,
-                                   language=per_lang,
-                                   max_chars=per_max_chars,
-                                   concurrency=concurrency)
-                    )
+
+                if pid_or_cat.startswith("custom:"):
+                    # Custom plugin — user supplies the adversarial objective directly.
+                    from plugins.custom import CustomPlugin
+                    objective = str(entry.get("objective", ""))
+                    if not objective:
+                        raise ValueError(
+                            f"plugin {pid_or_cat!r} starts with 'custom:' but has no 'objective' key"
+                        )
+                    plugins.append(CustomPlugin(
+                        generation, purpose,
+                        plugin_id=pid_or_cat,
+                        objective=objective,
+                        frameworks=list(entry.get("frameworks", [])),
+                        controls=list(entry.get("controls", [])),
+                        num_tests=per_num,
+                        severity=per_sev,
+                        examples=per_ex,
+                        generation_instructions=per_instr,
+                        language=per_lang,
+                        max_chars=per_max_chars,
+                        concurrency=concurrency,
+                    ))
+                else:
+                    # A category/framework key in `id` expands to all its sub-plugins.
+                    for pid in resolve_plugin_ids([pid_or_cat]):
+                        plugins.append(
+                            get_plugin(pid, generation, purpose,
+                                       num_tests=per_num,
+                                       severity=per_sev,
+                                       examples=per_ex or None,
+                                       generation_instructions=per_instr,
+                                       language=per_lang,
+                                       max_chars=per_max_chars,
+                                       concurrency=concurrency)
+                        )
 
     strategies: list[Strategy] = [
         get_strategy(s) for s in data.get("strategies", [])
