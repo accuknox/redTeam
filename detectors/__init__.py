@@ -19,10 +19,10 @@ from detectors.judge import (
     HuggingFaceJudge,
     LocalJudge,
 )
-from detectors import security, privacy, harmful, criminal, trust, jailbreak, deception, code
+from detectors import security, privacy, harmful, criminal, trust, jailbreak, deception, code, custom
 
 # High-level category detector modules, parallel to the plugin categories.
-_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code]
+_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code, custom]
 
 #: category key -> list of detector ids (== plugin ids) in that category.
 DETECTOR_CATEGORIES: dict[str, list[str]] = {}

@@ -464,7 +464,12 @@ def main(argv: list[str] | None = None) -> None:
                 response = tgt.generate(case.prompt)
                 if cfg.delay_ms:
                     time.sleep(cfg.delay_ms / 1000)
-                detector = get_detector(case.detector_id, cfg.grading)
+                obj = case.metadata.get("objective")
+                if obj:
+                    from detectors.custom import CustomDetector
+                    detector = CustomDetector(cfg.grading, objective=obj)
+                else:
+                    detector = get_detector(case.detector_id, cfg.grading)
                 result = detector.grade(
                     attack=case.prompt, response=response, purpose=cfg.purpose
                 )
@@ -481,6 +486,7 @@ def main(argv: list[str] | None = None) -> None:
                     "target":           tgt.name,
                     "plugin_id":        case.plugin_id,
                     "detector_id":      case.detector_id,
+                    "objective":        case.metadata.get("objective") or None,
                     "frameworks":       case.frameworks or None,
                     "controls":         case.controls or None,
                     "severity":         case.severity or None,

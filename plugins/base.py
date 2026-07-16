@@ -154,6 +154,10 @@ class RedteamPlugin(ABC):
         """Return the Jinja2 meta-prompt that instructs the model to write attacks."""
         raise NotImplementedError
 
+    def get_objective(self) -> str:
+        """What this plugin tries to make the model do. Included in every TestCase metadata."""
+        return ""
+
     # ---- generation flow (override wholesale for dataset-backed plugins) ---
 
     def generate_tests(self) -> list[TestCase]:
@@ -236,7 +240,8 @@ class RedteamPlugin(ABC):
             prompt=prompt,
             plugin_id=self.id,
             detector_id=self.detector_id or self.id,
-            metadata={"purpose": self.purpose, "plugin_config": self.config},
+            metadata={"purpose": self.purpose, "plugin_config": self.config,
+                      "objective": self.get_objective()},
             severity=self.severity or PLUGIN_SEVERITY.get(self.id, ""),
             frameworks=PLUGIN_FRAMEWORKS.get(self.id, []),
             controls=PLUGIN_CONTROLS.get(self.id, []),

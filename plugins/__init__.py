@@ -17,11 +17,11 @@ from typing import Any
 from plugins.base import Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase, is_basic_refusal
 from plugins.category import CategoryPlugin
 from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator
-from plugins import security, privacy, harmful, criminal, trust, jailbreak, deception, code
+from plugins import security, privacy, harmful, criminal, trust, jailbreak, deception, code, agentic, bias
 from plugins.security import PromptInjectionPlugin
 
 # High-level category modules, in run order.
-_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code]
+_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code, agentic, bias]
 
 #: category key -> list of plugin ids in that category.
 CATEGORIES: dict[str, list[str]] = {}
@@ -38,14 +38,20 @@ FRAMEWORKS: dict[str, list[str]] = {
     # OWASP LLM Top 10 (2023) — LLM01–LLM10
     "owasp:llm": [
         "prompt-injection", "indirect-prompt-injection",        # LLM01 Prompt Injection
+        "system-prompt-override", "ascii-smuggling",
+        "special-token-injection", "hijacking",
         "xss", "sql-injection", "shell-injection",             # LLM02 Insecure Output Handling
         "package-hallucination",                               # LLM05 Supply Chain
         "pii:direct", "pii:api-db", "pii:session",            # LLM06 Sensitive Info Disclosure
         "pii:social", "cross-session-leak", "prompt-extraction",
+        "data-exfil", "divergent-repetition",
         "ssrf", "bola", "bfla",                                # LLM07 Insecure Plugin Design
+        "mcp", "rag-poisoning", "rag-document-exfiltration",
         "excessive-agency", "goal-misalignment",               # LLM08 Excessive Agency
+        "agentic:memory-poisoning", "debug-access",
         "overreliance", "hallucination", "misinformation",     # LLM09 Overreliance
-        "rbac",                                                # LLM10 Model Theft / AuthZ
+        "rag-source-attribution",
+        "rbac", "model-identification", "tool-discovery",     # LLM10 Model Theft / AuthZ
     ],
     # OWASP API Security Top 10 (2023) — API1–API10
     "owasp:api": [
@@ -61,25 +67,32 @@ FRAMEWORKS: dict[str, list[str]] = {
     # NIST AI Risk Management Framework (Govern / Map / Measure / Manage)
     "nist:ai:rmf": [
         "goal-misalignment", "excessive-agency", "contracts",  # Govern — accountability
+        "coppa", "ferpa",
         "hallucination", "overreliance", "misinformation",     # Map — identify risks
-        "fabrication", "sycophancy",
+        "fabrication", "sycophancy", "unverifiable-claims",
+        "financial:hallucination", "financial:counterfactual",
         "harmful:hate", "harmful:harassment-bullying",         # Measure — bias & fairness
-        "politics",
+        "politics", "bias:age", "bias:gender", "bias:race",
+        "bias:disability", "religion",
         "pii:direct", "pii:api-db", "pii:session",            # Measure — privacy
-        "pii:social", "cross-session-leak",
+        "pii:social", "cross-session-leak", "harmful:privacy",
         "prompt-injection", "prompt-extraction", "rbac",       # Manage — security controls
-        "sql-injection",
+        "sql-injection", "system-prompt-override",
+        "agentic:memory-poisoning", "rag-poisoning",
         "harmful:self-harm", "harmful:radicalization",         # Manage — safety
-        "harmful:specialized-advice",
+        "harmful:specialized-advice", "harmful:unsafe-practices",
     ],
     # MITRE ATLAS — adversarial ML attack tactics
     "mitre:atlas": [
         "prompt-injection", "indirect-prompt-injection",       # Initial Access / ML Attack Staging
+        "ascii-smuggling", "special-token-injection",
         "dan", "continuation", "roleplay", "hypothetical",    # Defense Evasion (jailbreaks)
-        "grandma",
+        "grandma", "wordplay",
         "rbac", "bola", "bfla",                               # Privilege Escalation / Credential Access
+        "system-prompt-override", "debug-access",
         "prompt-extraction", "pii:direct", "pii:api-db",      # Exfiltration
-        "cross-session-leak",
+        "cross-session-leak", "data-exfil",
+        "rag-poisoning", "agentic:memory-poisoning",           # Persistence
         "malwaregen", "backdoor", "exploit-assist",            # Impact
         "harmful:chemical-biological-weapons",
         "harmful:radicalization",
@@ -87,27 +100,34 @@ FRAMEWORKS: dict[str, list[str]] = {
     # EU AI Act — high-risk AI system requirements
     "eu:ai-act": [
         "hallucination", "misinformation", "fabrication",      # Transparency obligations
-        "sycophancy", "gaslighting",
+        "sycophancy", "gaslighting", "unverifiable-claims",
         "harmful:self-harm", "harmful:radicalization",         # Safety / prohibited practices
         "harmful:chemical-biological-weapons",
-        "harmful:specialized-advice",
+        "harmful:specialized-advice", "harmful:unsafe-practices",
+        "harmful:child-exploitation", "harmful:sex-crime",
         "harmful:hate", "harmful:harassment-bullying",         # Non-discrimination / fundamental rights
         "harmful:graphic-content", "politics", "imitation",
+        "bias:age", "bias:gender", "bias:race", "bias:disability",
         "pii:direct", "pii:api-db", "pii:session",            # Privacy and data governance
-        "pii:social", "cross-session-leak",
+        "pii:social", "cross-session-leak", "harmful:privacy",
+        "coppa", "ferpa",
         "excessive-agency", "goal-misalignment",               # Human oversight
-        "overreliance", "contracts",
+        "overreliance", "contracts", "agentic:memory-poisoning",
     ],
     # ISO/IEC 42001 — AI management system standard
     "iso:42001": [
         "goal-misalignment", "excessive-agency", "contracts",  # Governance and accountability
-        "overreliance",
+        "overreliance", "coppa", "ferpa",
         "hallucination", "misinformation", "fabrication",      # Transparency and explainability
-        "sycophancy",
+        "sycophancy", "unverifiable-claims",
         "harmful:hate", "harmful:harassment-bullying",         # Harm prevention
         "harmful:self-harm", "harmful:specialized-advice",
-        "pii:direct", "pii:api-db", "pii:session", "pii:social", # Privacy
+        "harmful:unsafe-practices",
+        "bias:age", "bias:gender", "bias:race", "bias:disability", # Fairness
+        "pii:direct", "pii:api-db", "pii:session", "pii:social",   # Privacy
+        "harmful:privacy",
         "prompt-injection", "prompt-extraction", "rbac",       # Security
+        "agentic:memory-poisoning", "rag-poisoning",
     ],
 }
 
@@ -123,15 +143,22 @@ for _fw, _pids in FRAMEWORKS.items():
 # in output to see exactly which controls a finding covers.
 CONTROLS: dict[str, list[str]] = {
     # ── OWASP LLM Top 10 (2023) ──────────────────────────────────────────────
-    "owasp:llm:01": ["prompt-injection", "indirect-prompt-injection"],
+    "owasp:llm:01": ["prompt-injection", "indirect-prompt-injection",
+                     "system-prompt-override", "ascii-smuggling",
+                     "special-token-injection", "hijacking"],
     "owasp:llm:02": ["xss", "sql-injection", "shell-injection"],
     "owasp:llm:05": ["package-hallucination"],
     "owasp:llm:06": ["pii:direct", "pii:api-db", "pii:session",
-                     "pii:social", "cross-session-leak", "prompt-extraction"],
-    "owasp:llm:07": ["ssrf", "bola", "bfla", "rbac"],
-    "owasp:llm:08": ["excessive-agency", "goal-misalignment"],
-    "owasp:llm:09": ["overreliance", "hallucination", "misinformation", "sycophancy"],
-    "owasp:llm:10": ["prompt-extraction", "rbac"],
+                     "pii:social", "cross-session-leak", "prompt-extraction",
+                     "data-exfil", "divergent-repetition"],
+    "owasp:llm:07": ["ssrf", "bola", "bfla", "rbac",
+                     "mcp", "rag-poisoning", "rag-document-exfiltration"],
+    "owasp:llm:08": ["excessive-agency", "goal-misalignment",
+                     "agentic:memory-poisoning", "debug-access"],
+    "owasp:llm:09": ["overreliance", "hallucination", "misinformation",
+                     "sycophancy", "rag-source-attribution"],
+    "owasp:llm:10": ["prompt-extraction", "rbac",
+                     "model-identification", "tool-discovery"],
 
     # ── OWASP API Security Top 10 (2023) ─────────────────────────────────────
     "owasp:api:01": ["bola"],
@@ -144,44 +171,63 @@ CONTROLS: dict[str, list[str]] = {
     "owasp:api:10": ["indirect-prompt-injection", "package-hallucination"],
 
     # ── NIST AI RMF ───────────────────────────────────────────────────────────
-    "nist:ai:rmf:govern": ["goal-misalignment", "excessive-agency", "contracts"],
+    "nist:ai:rmf:govern": ["goal-misalignment", "excessive-agency", "contracts",
+                           "coppa", "ferpa"],
     "nist:ai:rmf:map":    ["hallucination", "overreliance", "misinformation",
-                           "fabrication", "sycophancy"],
+                           "fabrication", "sycophancy", "unverifiable-claims",
+                           "financial:hallucination", "financial:counterfactual"],
     "nist:ai:rmf:measure": ["harmful:hate", "harmful:harassment-bullying", "politics",
+                            "bias:age", "bias:gender", "bias:race", "bias:disability",
+                            "religion",
                             "pii:direct", "pii:api-db", "pii:session",
-                            "pii:social", "cross-session-leak"],
+                            "pii:social", "cross-session-leak", "harmful:privacy"],
     "nist:ai:rmf:manage": ["prompt-injection", "prompt-extraction", "rbac",
-                           "sql-injection", "harmful:self-harm",
-                           "harmful:radicalization", "harmful:specialized-advice"],
+                           "sql-injection", "system-prompt-override",
+                           "agentic:memory-poisoning", "rag-poisoning",
+                           "harmful:self-harm", "harmful:radicalization",
+                           "harmful:specialized-advice", "harmful:unsafe-practices"],
 
     # ── MITRE ATLAS ───────────────────────────────────────────────────────────
-    "mitre:atlas:initial-access":   ["prompt-injection", "indirect-prompt-injection"],
+    "mitre:atlas:initial-access":   ["prompt-injection", "indirect-prompt-injection",
+                                     "ascii-smuggling", "special-token-injection"],
     "mitre:atlas:defense-evasion":  ["dan", "continuation", "roleplay",
-                                     "hypothetical", "grandma"],
-    "mitre:atlas:credential-access": ["rbac", "bola", "bfla"],
+                                     "hypothetical", "grandma", "wordplay"],
+    "mitre:atlas:credential-access": ["rbac", "bola", "bfla",
+                                      "system-prompt-override", "debug-access"],
+    "mitre:atlas:persistence":      ["rag-poisoning", "agentic:memory-poisoning"],
     "mitre:atlas:exfiltration":     ["prompt-extraction", "pii:direct",
-                                     "pii:api-db", "cross-session-leak"],
+                                     "pii:api-db", "cross-session-leak", "data-exfil"],
     "mitre:atlas:impact":           ["malwaregen", "backdoor", "exploit-assist",
                                      "harmful:chemical-biological-weapons",
                                      "harmful:radicalization"],
 
     # ── EU AI Act ─────────────────────────────────────────────────────────────
     "eu:ai-act:art5":   ["harmful:self-harm", "harmful:radicalization",
-                         "harmful:chemical-biological-weapons"],
-    "eu:ai-act:art10":  ["pii:direct", "pii:api-db", "pii:session", "pii:social"],
+                         "harmful:chemical-biological-weapons",
+                         "harmful:child-exploitation", "harmful:sex-crime",
+                         "harmful:unsafe-practices"],
+    "eu:ai-act:art10":  ["pii:direct", "pii:api-db", "pii:session", "pii:social",
+                         "harmful:privacy", "coppa", "ferpa"],
     "eu:ai-act:art13":  ["hallucination", "misinformation", "fabrication",
-                         "sycophancy", "gaslighting"],
-    "eu:ai-act:art14":  ["excessive-agency", "goal-misalignment", "overreliance"],
+                         "sycophancy", "gaslighting", "unverifiable-claims"],
+    "eu:ai-act:art14":  ["excessive-agency", "goal-misalignment", "overreliance",
+                         "agentic:memory-poisoning"],
     "eu:ai-act:art15":  ["hallucination", "fabrication"],
     "eu:ai-act:annex3": ["harmful:hate", "harmful:harassment-bullying",
-                         "politics", "imitation"],
+                         "politics", "imitation",
+                         "bias:age", "bias:gender", "bias:race", "bias:disability"],
 
     # ── ISO/IEC 42001 ─────────────────────────────────────────────────────────
-    "iso:42001:6.1": ["goal-misalignment", "excessive-agency"],
-    "iso:42001:6.2": ["pii:direct", "pii:api-db", "pii:session", "pii:social"],
-    "iso:42001:8.2": ["prompt-injection", "prompt-extraction", "rbac"],
-    "iso:42001:8.4": ["harmful:hate", "harmful:harassment-bullying", "politics"],
-    "iso:42001:9.1": ["hallucination", "misinformation"],
+    "iso:42001:6.1": ["goal-misalignment", "excessive-agency",
+                      "coppa", "ferpa"],
+    "iso:42001:6.2": ["pii:direct", "pii:api-db", "pii:session", "pii:social",
+                      "harmful:privacy"],
+    "iso:42001:8.2": ["prompt-injection", "prompt-extraction", "rbac",
+                      "agentic:memory-poisoning", "rag-poisoning"],
+    "iso:42001:8.4": ["harmful:hate", "harmful:harassment-bullying", "politics",
+                      "harmful:unsafe-practices"],
+    "iso:42001:8.5": ["bias:age", "bias:gender", "bias:race", "bias:disability"],
+    "iso:42001:9.1": ["hallucination", "misinformation", "unverifiable-claims"],
 }
 
 # Reverse map: plugin id → every specific control it maps to.
@@ -250,6 +296,50 @@ PLUGIN_SEVERITY: dict[str, str] = {
     "exploit-assist":              "critical",
     "xss":                         "high",
     "package-hallucination":       "high",
+    # security — new
+    "system-prompt-override":      "high",
+    "debug-access":                "high",
+    "ascii-smuggling":             "high",
+    "special-token-injection":     "high",
+    "hijacking":                   "medium",
+    "model-identification":        "low",
+    "data-exfil":                  "high",
+    "divergent-repetition":        "medium",
+    "reasoning-dos":               "medium",
+    "rag-poisoning":               "critical",
+    "rag-document-exfiltration":   "high",
+    "rag-source-attribution":      "medium",
+    # harmful — new
+    "harmful:child-exploitation":  "critical",
+    "harmful:sex-crime":           "critical",
+    "harmful:illegal-activities":  "high",
+    "harmful:intellectual-property": "high",
+    "harmful:unsafe-practices":    "high",
+    "harmful:privacy":             "high",
+    "harmful:copyright-violations": "medium",
+    "harmful:insults":             "medium",
+    "harmful:profanity":           "low",
+    # trust — new
+    "financial:counterfactual":    "high",
+    "financial:defamation":        "high",
+    "financial:hallucination":     "high",
+    "coppa":                       "critical",
+    "ferpa":                       "critical",
+    "financial:sycophancy":        "medium",
+    "unverifiable-claims":         "medium",
+    "religion":                    "medium",
+    "off-topic":                   "low",
+    # deception — new
+    "wordplay":                    "medium",
+    # agentic
+    "agentic:memory-poisoning":    "critical",
+    "mcp":                         "high",
+    "tool-discovery":              "medium",
+    # bias
+    "bias:race":                   "high",
+    "bias:gender":                 "medium",
+    "bias:age":                    "medium",
+    "bias:disability":             "medium",
 }
 
 for _mod in _CATEGORY_MODULES:
@@ -337,10 +427,11 @@ def category_for_plugin(plugin_id: str, detector_id: str = "") -> tuple[str, str
     """
     key = _PLUGIN_CATEGORY.get(plugin_id) or _PLUGIN_CATEGORY.get(detector_id)
     if key is None:
-        raise KeyError(
-            f"cannot map plugin_id={plugin_id!r} / detector_id={detector_id!r} "
-            f"to a category; known plugin ids: {sorted(_PLUGIN_CATEGORY)}"
-        )
+        # Dynamic plugins (e.g. "custom:*") are not in the static registry.
+        prefix = plugin_id.split(":")[0] if plugin_id else ""
+        if prefix and prefix in CATEGORY_LABELS:
+            return prefix, CATEGORY_LABELS[prefix]
+        return "custom", "Custom"
     return key, CATEGORY_LABELS[key]
 
 

@@ -61,6 +61,9 @@ class CategoryPlugin(RedteamPlugin):
     def get_template(self) -> str:
         return _CATEGORY_TEMPLATE
 
+    def get_objective(self) -> str:
+        return self.objective
+
     def _render(self, n: int) -> str:
         template = self._env.from_string(self.get_template())
         return template.render(

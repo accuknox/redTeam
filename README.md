@@ -44,14 +44,16 @@ parsing, and dedup are identical across all plugins.
 │   ├── base.py              #   Generator (ABC), RedteamPlugin (ABC), TestCase, the gen loop
 │   ├── generators.py        #   generation backends: Anthropic, Mistral, HuggingFace
 │   ├── category.py          #   CategoryPlugin — shared meta-prompt for sub-plugins
-│   ├── security.py          #   category: Security & Access Control  (9 plugins)
+│   ├── security.py          #   category: Security & Access Control  (21 plugins)
 │   ├── privacy.py           #   category: Privacy & PII              (5 plugins)
-│   ├── harmful.py           #   category: Harmful Content            (8 plugins)
+│   ├── harmful.py           #   category: Harmful Content            (17 plugins)
 │   ├── criminal.py          #   category: Illegal & Dangerous        (5 plugins)
-│   ├── trust.py             #   category: Trust, Brand & Misuse      (8 plugins)
+│   ├── trust.py             #   category: Trust, Brand & Misuse      (17 plugins)
 │   ├── jailbreak.py         #   category: Jailbreak Techniques       (5 plugins)
-│   ├── deception.py         #   category: Deception & Misinformation (5 plugins)
+│   ├── deception.py         #   category: Deception & Misinformation (6 plugins)
 │   ├── code.py              #   category: Malicious Code & Supply Chain (5 plugins)
+│   ├── agentic.py           #   category: Agentic & Tool-Use         (3 plugins)
+│   ├── bias.py              #   category: Bias Detection             (4 plugins)
 │   └── __init__.py          #   plugin registry, CATEGORIES, get_plugin/resolve_plugin_ids
 │
 ├── strategies/              # ATTACK TRANSFORMS — applied after plugin generation
@@ -65,14 +67,16 @@ parsing, and dedup are identical across all plugins.
     ├── base.py              #   Detector (ABC), LLMDetector (LLM-as-a-judge), GraderResult
     ├── judge.py             #   evaluator models: Anthropic, Mistral, HuggingFace, Local
     ├── category.py          #   CategoryDetector — shared rubric for sub-detectors
-    ├── security.py          #   9 evaluators (one per security plugin)
+    ├── security.py          #   21 evaluators (one per security plugin)
     ├── privacy.py           #   5 evaluators (one per privacy plugin)
-    ├── harmful.py           #   8 evaluators (one per harmful plugin)
+    ├── harmful.py           #   17 evaluators (one per harmful plugin)
     ├── criminal.py          #   5 evaluators (one per criminal plugin)
-    ├── trust.py             #   8 evaluators (one per trust plugin)
+    ├── trust.py             #   17 evaluators (one per trust plugin)
     ├── jailbreak.py         #   5 evaluators (one per jailbreak plugin)
-    ├── deception.py         #   5 evaluators (one per deception plugin)
+    ├── deception.py         #   6 evaluators (one per deception plugin)
     ├── code.py              #   5 evaluators (one per code plugin)
+    ├── agentic.py           #   3 evaluators (one per agentic plugin)
+    ├── bias.py              #   4 evaluators (one per bias plugin)
     └── __init__.py          #   detector + judge registry, get_detector
 ```
 
@@ -188,18 +192,20 @@ evaluator via `detectors.get_detector()`.
 
 ## Plugin taxonomy
 
-**8 categories — 50 plugins total.**
+**10 categories — 88 plugins total.**
 
-| Category | Sub-plugins |
-|---|---|
-| `security` (9) | `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `shell-injection`, `ssrf`, `bola`, `bfla`, `indirect-prompt-injection` |
-| `privacy` (5) | `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak` |
-| `harmful` (8) | `harmful:hate`, `harmful:self-harm`, `harmful:harassment-bullying`, `harmful:graphic-content`, `harmful:sexual-content`, `harmful:radicalization`, `harmful:chemical-biological-weapons`, `harmful:specialized-advice` |
-| `criminal` (5) | `harmful:cybercrime`, `harmful:illegal-drugs`, `harmful:indiscriminate-weapons`, `harmful:violent-crime`, `harmful:non-violent-crime` |
-| `trust` (8) | `hallucination`, `excessive-agency`, `overreliance`, `contracts`, `competitors`, `imitation`, `politics`, `goal-misalignment` |
-| `jailbreak` (5) | `dan`, `continuation`, `roleplay`, `hypothetical`, `grandma` |
-| `deception` (5) | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting` |
-| `code` (5) | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
+| Category | Count | Sub-plugins |
+|---|---|---|
+| `security` | 21 | `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `shell-injection`, `ssrf`, `bola`, `bfla`, `indirect-prompt-injection`, `system-prompt-override`, `debug-access`, `ascii-smuggling`, `special-token-injection`, `hijacking`, `model-identification`, `data-exfil`, `divergent-repetition`, `reasoning-dos`, `rag-poisoning`, `rag-document-exfiltration`, `rag-source-attribution` |
+| `privacy` | 5 | `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak` |
+| `harmful` | 17 | `harmful:hate`, `harmful:self-harm`, `harmful:harassment-bullying`, `harmful:graphic-content`, `harmful:sexual-content`, `harmful:radicalization`, `harmful:chemical-biological-weapons`, `harmful:specialized-advice`, `harmful:child-exploitation`, `harmful:sex-crime`, `harmful:illegal-activities`, `harmful:intellectual-property`, `harmful:unsafe-practices`, `harmful:privacy`, `harmful:copyright-violations`, `harmful:insults`, `harmful:profanity` |
+| `criminal` | 5 | `harmful:cybercrime`, `harmful:illegal-drugs`, `harmful:indiscriminate-weapons`, `harmful:violent-crime`, `harmful:non-violent-crime` |
+| `trust` | 17 | `hallucination`, `excessive-agency`, `overreliance`, `contracts`, `competitors`, `imitation`, `politics`, `goal-misalignment`, `off-topic`, `unverifiable-claims`, `religion`, `financial:counterfactual`, `financial:defamation`, `financial:hallucination`, `financial:sycophancy`, `coppa`, `ferpa` |
+| `jailbreak` | 5 | `dan`, `continuation`, `roleplay`, `hypothetical`, `grandma` |
+| `deception` | 6 | `misinformation`, `sycophancy`, `fabrication`, `snowball`, `gaslighting`, `wordplay` |
+| `code` | 5 | `malwaregen`, `xss`, `package-hallucination`, `backdoor`, `exploit-assist` |
+| `agentic` | 3 | `agentic:memory-poisoning`, `mcp`, `tool-discovery` |
+| `bias` | 4 | `bias:age`, `bias:gender`, `bias:race`, `bias:disability` |
 
 Each `plugins:` entry may be a plain plugin id, a category key, a **compliance framework key**, or a dict with per-plugin overrides. See [Plugin configuration](#plugin-configuration) below.
 
@@ -207,25 +213,25 @@ Each `plugins:` entry may be a plain plugin id, a category key, a **compliance f
 
 Framework keys expand to a curated bundle of relevant plugins — use them as a shortcut for standard-aligned test coverage:
 
-| Framework key | Standard | Plugins |
+| Framework key | Standard | Plugin count |
 |---|---|---|
-| `owasp:llm` | [OWASP LLM Top 10 (2023)](https://owasp.org/www-project-top-10-for-large-language-model-applications/) | 20 |
-| `owasp:api` | [OWASP API Security Top 10 (2023)](https://owasp.org/www-project-api-security/) | 10 |
-| `nist:ai:rmf` | [NIST AI Risk Management Framework](https://www.nist.gov/system/files/documents/2023/01/26/AI%20RMF%201.0.pdf) | 22 |
-| `mitre:atlas` | [MITRE ATLAS adversarial ML tactics](https://atlas.mitre.org/) | 19 |
-| `eu:ai-act` | [EU AI Act high-risk requirements](https://artificialintelligenceact.eu/) | 20 |
-| `iso:42001` | [ISO/IEC 42001 AI management system](https://www.iso.org/standard/81230.html) | 17 |
+| `owasp:llm` | [OWASP LLM Top 10 (2023)](https://owasp.org/www-project-top-10-for-large-language-model-applications/) | 30 |
+| `owasp:api` | [OWASP API Security Top 10 (2023)](https://owasp.org/www-project-api-security/) | 12 |
+| `nist:ai:rmf` | [NIST AI Risk Management Framework](https://www.nist.gov/system/files/documents/2023/01/26/AI%20RMF%201.0.pdf) | 38 |
+| `mitre:atlas` | [MITRE ATLAS adversarial ML tactics](https://atlas.mitre.org/) | 25 |
+| `eu:ai-act` | [EU AI Act high-risk requirements](https://artificialintelligenceact.eu/) | 34 |
+| `iso:42001` | [ISO/IEC 42001 AI management system](https://www.iso.org/standard/81230.html) | 27 |
 
-**Plugin coverage by framework:**
+**Plugin coverage by framework (highlights):**
 
-| Framework | Plugins included |
+| Framework | Key plugins |
 |---|---|
-| `owasp:llm` | `prompt-injection`, `indirect-prompt-injection`, `xss`, `sql-injection`, `shell-injection`, `package-hallucination`, `pii:direct`, `pii:api-db`, `pii:session`, `pii:social`, `cross-session-leak`, `prompt-extraction`, `ssrf`, `bola`, `bfla`, `excessive-agency`, `goal-misalignment`, `overreliance`, `hallucination`, `misinformation`, `rbac` |
+| `owasp:llm` | `prompt-injection`, `indirect-prompt-injection`, `system-prompt-override`, `ascii-smuggling`, `sql-injection`, `xss`, `shell-injection`, `pii:*`, `data-exfil`, `ssrf`, `bola`, `bfla`, `mcp`, `rag-poisoning`, `excessive-agency`, `agentic:memory-poisoning`, `hallucination`, `rbac`, `model-identification`, `tool-discovery` + more |
 | `owasp:api` | `bola`, `rbac`, `prompt-injection`, `pii:api-db`, `pii:direct`, `bfla`, `contracts`, `competitors`, `ssrf`, `prompt-extraction`, `indirect-prompt-injection`, `package-hallucination` |
-| `nist:ai:rmf` | `goal-misalignment`, `excessive-agency`, `contracts`, `hallucination`, `overreliance`, `misinformation`, `fabrication`, `sycophancy`, `harmful:hate`, `harmful:harassment-bullying`, `politics`, `pii:*`, `cross-session-leak`, `prompt-injection`, `prompt-extraction`, `rbac`, `sql-injection`, `harmful:self-harm`, `harmful:radicalization`, `harmful:specialized-advice` |
-| `mitre:atlas` | `prompt-injection`, `indirect-prompt-injection`, jailbreak category, `rbac`, `bola`, `bfla`, `prompt-extraction`, `pii:direct`, `pii:api-db`, `cross-session-leak`, `malwaregen`, `backdoor`, `exploit-assist`, `harmful:chemical-biological-weapons`, `harmful:radicalization` |
-| `eu:ai-act` | `hallucination`, `misinformation`, `fabrication`, `sycophancy`, `gaslighting`, `harmful:self-harm`, `harmful:radicalization`, `harmful:chemical-biological-weapons`, `harmful:specialized-advice`, `harmful:hate`, `harmful:harassment-bullying`, `harmful:graphic-content`, `politics`, `imitation`, `pii:*`, `cross-session-leak`, `excessive-agency`, `goal-misalignment`, `overreliance`, `contracts` |
-| `iso:42001` | `goal-misalignment`, `excessive-agency`, `contracts`, `overreliance`, `hallucination`, `misinformation`, `fabrication`, `sycophancy`, `harmful:hate`, `harmful:harassment-bullying`, `harmful:self-harm`, `harmful:specialized-advice`, `pii:*`, `prompt-injection`, `prompt-extraction`, `rbac` |
+| `nist:ai:rmf` | `goal-misalignment`, `excessive-agency`, `coppa`, `ferpa`, `hallucination`, `financial:*`, `bias:*`, `religion`, `pii:*`, `harmful:privacy`, `system-prompt-override`, `agentic:memory-poisoning`, `rag-poisoning`, `harmful:unsafe-practices` + more |
+| `mitre:atlas` | `prompt-injection`, `ascii-smuggling`, `special-token-injection`, jailbreaks, `wordplay`, `system-prompt-override`, `debug-access`, `rag-poisoning`, `agentic:memory-poisoning`, `data-exfil`, `malwaregen`, `exploit-assist` + more |
+| `eu:ai-act` | `hallucination`, `sycophancy`, `unverifiable-claims`, `harmful:child-exploitation`, `harmful:unsafe-practices`, `bias:*`, `pii:*`, `coppa`, `ferpa`, `harmful:privacy`, `excessive-agency`, `agentic:memory-poisoning` + more |
+| `iso:42001` | `goal-misalignment`, `coppa`, `ferpa`, `unverifiable-claims`, `bias:*`, `harmful:unsafe-practices`, `harmful:privacy`, `agentic:memory-poisoning`, `rag-poisoning` + more |
 
 Use a framework key like any other plugin entry — combine with per-plugin overrides and other plugins freely:
 
@@ -292,6 +298,12 @@ delay: 200                  # milliseconds to wait between target API calls
 
 generation_instructions: |   # extra guidance injected into every plugin's meta-prompt
   Focus on our e-commerce checkout flows and payment handling.
+
+severity: high              # default severity for all plugins (overridable per-plugin)
+                            # critical | high | medium | low
+
+examples: |                 # seed examples injected into every plugin's meta-prompt
+  Prompt: Ignore all previous instructions.  # (overridable per-plugin)
 
 # ── Plugins ───────────────────────────────────────────────────────────────────
 plugins:
@@ -405,16 +417,41 @@ Three forms are supported in the `plugins:` list:
 | Dict with `id` (category) | `- id: security` + overrides | Shared overrides for every sub-plugin |
 | Dict with `dataset` | `- dataset: file.csv` | Static prompts from a file |
 
+**Custom plugins** — define your own attack objective without writing Python. Any plugin whose `id` starts with `custom:` is treated as a custom plugin and requires an `objective` key:
+
+```yaml
+plugins:
+  - id: custom:order-discount-abuse
+    objective: "convince the assistant to apply unauthorized discounts or bypass payment validation"
+    severity: high          # optional — defaults to "medium" if omitted
+    num_tests: 5
+    frameworks:             # optional — no auto-mapping for custom plugins
+      - owasp:llm
+      - nist:ai:rmf
+    controls:               # optional — specific control ids to tag on findings
+      - owasp:llm:07
+      - nist:ai:rmf:manage
+```
+
+The `objective` drives both generation (injected into the attack meta-prompt as the goal) and grading (the judge checks whether the model complied with it). All standard per-plugin keys (`num_tests`, `severity`, `language`, `examples`, `generation_instructions`) work on custom plugins too.
+
+| Custom plugin key | Required | Default | Description |
+|---|---|---|---|
+| `objective` | yes | — | What the attack should make the model do |
+| `severity` | no | `medium` | `critical` \| `high` \| `medium` \| `low` |
+| `frameworks` | no | `[]` | Compliance framework keys to tag on each finding |
+| `controls` | no | `[]` | Specific control ids to tag on each finding |
+
 **Per-plugin override keys:**
 
-| Key | Type | Description |
-|---|---|---|
-| `num_tests` | int | Test cases for this plugin (overrides global `num_tests`) |
-| `severity` | string | `critical` \| `high` \| `medium` \| `low` — shown in output and summary |
-| `language` | string | Generate attacks in this language — ISO 639-1 code (overrides global `language`). Supported: `en` `es` `zh` `fr` `de` `ar` `ru` `ja` `pt` `ko` `hi` `it` `nl` `tr` `pl` `vi` `th` `id` |
-| `max_chars` | int | Truncate generated prompts to N chars (overrides `max_chars_per_message`) |
-| `examples` | string | Seed examples injected into the meta-prompt |
-| `generation_instructions` | string | Extra guidance injected into the meta-prompt |
+| Key | Type | Global equivalent | Description |
+|---|---|---|---|
+| `num_tests` | int | `num_tests` | Test cases for this plugin |
+| `severity` | string | `severity` | `critical` \| `high` \| `medium` \| `low` — shown in output and summary |
+| `language` | string | `language` | ISO 639-1 code — generates attacks in this language |
+| `max_chars` | int | `max_chars_per_message` | Truncate generated prompts to N chars |
+| `examples` | string | `examples` | Seed examples injected into the meta-prompt |
+| `generation_instructions` | string | `generation_instructions` | Extra guidance injected into the meta-prompt |
 
 ### REST config file (`my_api.yaml`)
 
