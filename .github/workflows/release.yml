@@ -1,0 +1,147 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── Job 1: Create the release + upload wheel ──────────────────────────────
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tool
+        run: pip install build
+
+      - name: Build Python wheel
+        run: python -m build --wheel
+
+      - name: Create GitHub Release and upload wheel
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.whl
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  # ── Job 2: Build binary (Linux + Windows) and upload ─────────────────────
+  build-binary:
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            ext: ''
+          - os: windows-latest
+            name: windows
+            ext: '.exe'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+
+    continue-on-error: true
+
+    outputs:
+      linux_done: ${{ steps.flag-linux.outputs.ready || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install deps and build binary
+        run: |
+          uv pip install -e ".[build]"
+          pyinstaller knox_rt.spec --clean
+
+      - name: Test binary
+        shell: bash
+        run: ./dist/knox-rt${{ matrix.ext }} --help
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/knox-rt${{ matrix.ext }}
+
+      - name: Save Linux binary as artifact (for deb job)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-linux
+          retention-days: 1
+          path: dist/knox-rt
+
+      - name: Flag Linux completion
+        if: matrix.os == 'ubuntu-latest'
+        id: flag-linux
+        run: echo "ready=true" >> $GITHUB_OUTPUT
+
+  # ── Job 3: Build tar.gz + .deb using the Linux binary ────────────────────
+  build-deb:
+    needs: [release, build-binary]
+    if: needs.build-binary.outputs.linux_done == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-linux
+          path: dist
+
+      - name: Build tar.gz
+        run: |
+          KNOX_RT_FOLDER="knox-rt"
+          KNOX_RT_TAR="knox-rt.tar.gz"
+
+          rm -rf "$KNOX_RT_FOLDER"
+          mkdir -p "$KNOX_RT_FOLDER"
+          cp dist/knox-rt "$KNOX_RT_FOLDER/knox-rt"
+          tar -czvf "$KNOX_RT_TAR" "$KNOX_RT_FOLDER"
+          rm -rf "$KNOX_RT_FOLDER"
+          echo "✅ knox-rt binary packaged as $KNOX_RT_TAR"
+
+      - name: Build .deb package
+        run: |
+          sudo apt-get install -y ruby ruby-dev
+          sudo gem install --no-document fpm
+          VERSION=${GITHUB_REF_NAME#v}
+          fpm -s dir -t deb \
+            -n knox-rt \
+            -v "${VERSION}" \
+            --description "Knox Red Team — LLM adversarial testing toolkit by AccuKnox" \
+            --maintainer "AccuKnox <support@accuknox.com>" \
+            --url "https://github.com/accuknox/redTeam" \
+            dist/knox-rt=/usr/local/bin/knox-rt
+          echo "✅ .deb package built"
+
+      - name: Upload tar.gz and .deb to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            knox-rt.tar.gz
+            *.deb

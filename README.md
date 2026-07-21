@@ -481,13 +481,85 @@ api_key: my-secret
 
 ## Running
 
-**Install (recommended):**
+### 1. Install directly from GitHub (no clone needed)
+
 ```bash
-pip install -e ".[anthropic,mistral]"   # installs knox-rt as a CLI command
-knox-rt --help
+# Recommended — installs the full tool with all backends
+# Switch provider anytime just by changing backend: in config, no reinstall needed
+pip install "knox-rt[all] @ git+https://github.com/accuknox/redTeam.git"
+knox-rt --list-plugins
 ```
 
-**Or run directly without installing:**
+`[all]` includes **Anthropic + Mistral + OpenAI** — covers every cloud provider and any
+OpenAI-compatible self-hosted endpoint (vLLM, Ollama, LM Studio). Switch between them
+by changing `backend:` in your config file, nothing else required.
+
+```bash
+# Also want local HuggingFace models? Add huggingface (installs torch — ~3 GB extra)
+pip install "knox-rt[all,huggingface] @ git+https://github.com/accuknox/redTeam.git"
+```
+
+To install a specific branch or tag:
+
+```bash
+pip install "knox-rt[all] @ git+https://github.com/accuknox/redTeam.git@main"
+```
+
+---
+
+### 2. Install from a GitHub release wheel
+
+Pin to a specific release version without needing git or the repository:
+
+```bash
+pip install "https://github.com/accuknox/redTeam/releases/download/v0.1.0/knox_rt-0.1.0-py3-none-any.whl[all]"
+knox-rt --list-plugins
+```
+
+Replace `v0.1.0` with the release tag you want. Find all releases at:
+`https://github.com/accuknox/redTeam/releases`
+
+---
+
+### 3. Restricted or on-prem environment — standalone binary
+
+For air-gapped machines or environments where Python cannot be installed, download
+the pre-built binary from the release page — no Python, no pip, no venv required:
+
+```bash
+# Download the binary (no Python needed)
+curl -L https://github.com/accuknox/redTeam/releases/download/v0.1.0/knox-rt -o knox-rt
+chmod +x knox-rt
+./knox-rt --help
+./knox-rt run config.json
+```
+
+Or install the `.deb` package on Debian/Ubuntu systems:
+
+```bash
+sudo dpkg -i knox-rt_0.1.0_amd64.deb
+knox-rt --list-plugins
+```
+
+> **Build your own binary** from source using `./build.sh` — requires Python + the repo.
+> Output lands at `dist/knox-rt`. See [Building a standalone binary](#building-a-standalone-binary) below.
+
+---
+
+### 5. Clone and install (for development / editing the code)
+
+```bash
+git clone https://github.com/accuknox/redTeam.git
+cd redTeam
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e ".[anthropic,mistral,openai]"
+knox-rt --list-plugins
+```
+
+The `-e` flag makes the install editable — code changes take effect immediately without reinstalling.
+
+**Or run without installing at all:**
 ```bash
 pip install -r requirements.txt
 python cli.py --help
@@ -583,3 +655,34 @@ In a multi-target run the summary also includes a `"by_target"` breakdown — se
 - **New category** — add `plugins/<category>.py` (expose `CATEGORY` + `PLUGINS`)
   and `detectors/<category>.py` (expose `CATEGORY` + `DETECTORS`), then add each
   module to `_CATEGORY_MODULES` in its package `__init__.py`.
+
+---
+
+## Building a standalone binary
+
+Produces a single `dist/knox-rt` executable that embeds Python and all dependencies.
+Anyone can run it without installing Python or any packages.
+
+**Prerequisites:** Python 3.11+ and `uv` installed.
+
+```bash
+git clone https://github.com/accuknox/redTeam.git
+cd redTeam
+python3 -m venv .venv && source .venv/bin/activate
+./build.sh
+```
+
+The binary is written to `dist/knox-rt`. Test it:
+
+```bash
+./dist/knox-rt --help
+./dist/knox-rt run config.json
+```
+
+**How it works:**
+
+| File | Purpose |
+|---|---|
+| `build_entry.py` | Thin entrypoint PyInstaller analyses to trace all imports |
+| `knox_rt.spec` | Declares what to bundle — plugins, detectors, strategies, backends |
+| `build.sh` | One-command build: installs deps into venv, runs PyInstaller |
