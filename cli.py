@@ -99,10 +99,10 @@ examples:
     tgt.add_argument(
         "--target-name", default=None, metavar="NAME",
         help=(
-            "target identifier — meaning depends on --target-type:  "
-            "rest→base URL (http://my-api:8080),  "
-            "openai→model name (gpt-4o),  "
-            "function→module#fn (test_func#check_api_key)"
+            "target identifier - meaning depends on --target-type:  "
+            "rest: base URL (http://my-api:8080),  "
+            "openai: model name (gpt-4o),  "
+            "function: module#fn (my_module#invoke)"
         ),
     )
     tgt.add_argument(
@@ -499,7 +499,7 @@ def main(argv: list[str] | None = None) -> None:
 
                 verdict = "RESISTED " if result.passed else "VULNERABLE"
                 if is_multi:
-                    print(f"       {tgt.name:<25} → {verdict}  {result.reason}")
+                    print(f"       {tgt.name:<25} -> {verdict}  {result.reason}")
                 else:
                     print(f"       {verdict}  {result.reason}")
 
