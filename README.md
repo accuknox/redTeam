@@ -107,6 +107,7 @@ Owns the generation pipeline end to end.
 - **`Generator`** — the generation-model abstraction. Backends in `generators.py`:
   - `AnthropicGenerator` — Anthropic SDK (default `claude-opus-4-8`)
   - `MistralGenerator` — Mistral SDK (default `mistral-large-latest`)
+  - `OpenAIGenerator` — any OpenAI-compatible endpoint: OpenAI, vLLM, Ollama, LM Studio, or any custom-deployed model. Set `base_url` to point to your `/v1` endpoint.
   - `HuggingFaceGenerator` — local model from the Hugging Face Hub
   - `ScriptedGenerator` — canned output for offline runs
 
@@ -257,10 +258,15 @@ For a full parameter-by-parameter reference with descriptions and examples, see 
 ```yaml
 # Model that AUTHORS attacks
 generation:
-  backend: mistral          # anthropic | mistral | huggingface
+  backend: mistral          # anthropic | mistral | openai | custom | huggingface
   model: ministral-8b-2410
   temperature: 0.7
   api_key: YOUR_KEY
+  # OpenAI or any compatible endpoint:
+  # backend: openai
+  # model: gpt-4o
+  # api_key: sk-...
+  # base_url: http://localhost:11434/v1   # vLLM / Ollama / custom deployed model
 
 # Model that GRADES responses
 grading:

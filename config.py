@@ -27,6 +27,7 @@ from plugins import (
     Generator,
     HuggingFaceGenerator,
     MistralGenerator,
+    OpenAIGenerator,
     RedteamPlugin,
     get_plugin,
     resolve_plugin_ids,
@@ -59,8 +60,10 @@ def build_generator(spec: dict[str, Any]) -> Generator:
         return MistralGenerator(model, **spec)
     if backend == "huggingface":
         return HuggingFaceGenerator(model, **spec)
+    if backend in ("openai", "custom"):
+        return OpenAIGenerator(model, **spec)
     raise ValueError(
-        f"unknown generator backend {backend!r} (expected anthropic | mistral | huggingface)"
+        f"unknown generator backend {backend!r} (expected anthropic | mistral | huggingface | openai | custom)"
     )
 
 

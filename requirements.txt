@@ -6,6 +6,7 @@ requests>=2.31.0       # LocalJudge — OpenAI-compatible local evaluator
 # SDK-based generation backends
 anthropic>=0.109.2     # AnthropicGenerator — claude-opus-4-8 and friends
 mistralai>=1.0.0       # MistralGenerator — mistral-large-latest and friends
+openai>=1.0.0          # OpenAIGenerator — OpenAI + any /v1/chat/completions endpoint
 
 # Local Hugging Face generation (HuggingFaceGenerator) — optional, heavy.
 # Imported lazily, so only needed if you instantiate HuggingFaceGenerator.
