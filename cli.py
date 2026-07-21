@@ -29,7 +29,7 @@ from pathlib import Path
 from config import load_config
 from detectors import get_detector
 from inference import CallableProvider, RestProvider
-from plugins import CATEGORIES, all_plugin_ids, get_plugin, resolve_plugin_ids
+from plugins import CATEGORIES, _REGISTRY, all_plugin_ids, category_for_plugin, get_plugin, resolve_plugin_ids
 from strategies import _REGISTRY as _STRATEGY_REGISTRY, apply_strategies, get_strategy
 
 
@@ -223,7 +223,11 @@ def _load_prompts(path: Path) -> tuple[dict, list]:
     return header, cases
 
 
-def _save_prompts(path: Path, purpose: str, strategy_ids: list[str], cases: list) -> None:
+def _save_prompts(path: Path, purpose: str, strategy_ids: list[str], cases: list) -> Path:
+    # Always write as JSONL (one object per line) — force .jsonl extension so
+    # editors don't try to parse it as a single JSON document and fail on line 2.
+    if path.suffix.lower() == ".json":
+        path = path.with_suffix(".jsonl")
     header = {
         "_knox_rt_version": "1.0",
         "_generated_at":    _now(),
@@ -236,9 +240,11 @@ def _save_prompts(path: Path, purpose: str, strategy_ids: list[str], cases: list
         for tc in cases:
             f.write(json.dumps(_tc_to_dict(tc)) + "\n")
     tmp.rename(path)
+    return path
 
 
 def _run_plugin_with_topup(plugin, file_base: list) -> tuple:
+    t0 = time.perf_counter()
     shortfall = max(0, plugin.num_tests - len(file_base))
     if shortfall > 0:
         orig = plugin.num_tests
@@ -249,7 +255,7 @@ def _run_plugin_with_topup(plugin, file_base: list) -> tuple:
             plugin.num_tests = orig
     else:
         new_cases = []
-    return plugin, file_base + new_cases
+    return plugin, file_base + new_cases, round(time.perf_counter() - t0, 2)
 
 
 # --------------------------------------------------------------------------- #
@@ -393,12 +399,20 @@ def main(argv: list[str] | None = None) -> None:
     # --- generate attacks (top-up from file where available) ------------------
     # file_base: base prompts (strategy=null) already saved for this plugin
     # _run_plugin_with_topup generates only the shortfall to reach num_tests
+    run_start = time.perf_counter()
+    plugin_gen_time: dict[str, float] = {}
     all_plugin_results: list[tuple] = []
+
+    print("Generating prompts...")
     if cfg.concurrency <= 1:
         for plugin in cfg.plugins:
             file_base = [tc for tc in file_cases.get(plugin.id, [])
                          if not tc.metadata.get("strategy")]
-            all_plugin_results.append(_run_plugin_with_topup(plugin, file_base))
+            plugin, cases, gen_t = _run_plugin_with_topup(plugin, file_base)
+            plugin_gen_time[plugin.id] = gen_t
+            all_plugin_results.append((plugin, cases))
+            src = "cached" if not gen_t else f"{gen_t:.1f}s"
+            print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]")
     else:
         with ThreadPoolExecutor(max_workers=cfg.concurrency) as pool:
             futures = {
@@ -410,7 +424,12 @@ def main(argv: list[str] | None = None) -> None:
                 for pl in cfg.plugins
             }
             for future in as_completed(futures):
-                all_plugin_results.append(future.result())
+                plugin, cases, gen_t = future.result()
+                plugin_gen_time[plugin.id] = gen_t
+                all_plugin_results.append((plugin, cases))
+                src = "cached" if not gen_t else f"{gen_t:.1f}s"
+                print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]")
+    print()
 
     # --- build final case lists (apply only strategies missing from file) -----
     # For each plugin:
@@ -434,8 +453,10 @@ def main(argv: list[str] | None = None) -> None:
 
     # --- save prompts file (before hitting the target) -----------------------
     if save_prompts_path:
-        save_path = Path(save_prompts_path)
-        _save_prompts(save_path, cfg.purpose, [s.id for s in cfg.strategies], all_save_cases)
+        save_path = _save_prompts(
+            Path(save_prompts_path), cfg.purpose,
+            [s.id for s in cfg.strategies], all_save_cases,
+        )
         print(f"Prompts  → {save_path}")
 
     # --- attack + grade -------------------------------------------------------
@@ -445,11 +466,13 @@ def main(argv: list[str] | None = None) -> None:
     by_plugin: dict[str, dict] = {}
 
     for plugin, base_cases, final_cases in final_batches:
+        plugin_scan_start = time.perf_counter()
         n_strat = len(final_cases) - len(base_cases)
         strategy_note = f", {n_strat} strategy-augmented" if n_strat else ""
         augmented = final_cases
+        gen_t = plugin_gen_time.get(plugin.id, 0.0)
         print(f"=== {plugin.id} ===")
-        print(f"{len(base_cases)} base attack(s){strategy_note} → {len(final_cases)} total\n")
+        print(f"{len(base_cases)} base attack(s){strategy_note} → {len(final_cases)} total  [generated in {gen_t:.1f}s]\n")
 
         by_plugin[plugin.id] = {"total": 0, "vulnerable": 0}
 
@@ -480,13 +503,22 @@ def main(argv: list[str] | None = None) -> None:
                 else:
                     print(f"       {verdict}  {result.reason}")
 
+                cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
+                # objective: prefer metadata (custom plugins set it there), fall back
+                # to the class-level attribute for registry plugins (covers dataset cases).
+                objective = case.metadata.get("objective") or None
+                if not objective:
+                    cls = _REGISTRY.get(case.plugin_id) or _REGISTRY.get(case.detector_id)
+                    objective = getattr(cls, "objective", None) or None
                 all_records.append({
                     "run_id":           run_id,
                     "timestamp":        _now(),
                     "target":           tgt.name,
                     "plugin_id":        case.plugin_id,
                     "detector_id":      case.detector_id,
-                    "objective":        case.metadata.get("objective") or None,
+                    "category":         cat_key,
+                    "category_label":   cat_label,
+                    "objective":        objective,
                     "frameworks":       case.frameworks or None,
                     "controls":         case.controls or None,
                     "severity":         case.severity or None,

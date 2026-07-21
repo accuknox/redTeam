@@ -16,7 +16,7 @@ from typing import Any
 
 from plugins.base import Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase, is_basic_refusal
 from plugins.category import CategoryPlugin
-from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator
+from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator, OpenAIGenerator
 from plugins import security, privacy, harmful, criminal, trust, jailbreak, deception, code, agentic, bias
 from plugins.security import PromptInjectionPlugin
 

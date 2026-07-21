@@ -7,6 +7,8 @@ used:
   * `AnthropicGenerator`   — a hosted model via the Anthropic SDK.
   * `MistralGenerator`     — a hosted model via the Mistral SDK.
   * `HuggingFaceGenerator` — a model loaded locally from the Hugging Face Hub.
+  * `OpenAIGenerator`      — any OpenAI-compatible endpoint (OpenAI, vLLM, Ollama,
+                             LM Studio, or any custom-deployed model).
 
 Heavy dependencies (`anthropic`, `mistralai`, `transformers`, `torch`) are
 imported lazily inside `__init__`, so importing this module — and the rest of
@@ -124,6 +126,70 @@ class MistralGenerator(Generator):
                 getattr(chunk, "text", "") or "" for chunk in content
             )
         return (content or "").strip()
+
+
+class OpenAIGenerator(Generator):
+    """Generation via any OpenAI-compatible chat completions endpoint.
+
+    Works with:
+      - OpenAI API (default base_url points to api.openai.com)
+      - vLLM, Ollama, LM Studio, or any `/v1/chat/completions`-compatible server
+      - Custom deployed models (set base_url to your endpoint)
+
+    Config example (config.yaml):
+        generation:
+          backend: openai
+          model: gpt-4o
+          api_key: sk-...
+
+        # Custom / self-hosted endpoint:
+        generation:
+          backend: openai
+          base_url: http://localhost:11434/v1   # Ollama, vLLM, …
+          model: llama3
+          api_key: none                         # some servers require a placeholder
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        system: str | None = None,
+        client: Any = None,
+        **params: Any,
+    ) -> None:
+        import os
+        from openai import OpenAI
+
+        self.name = model
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.system = system
+        self.params = params
+        self._client = client or OpenAI(
+            api_key=api_key or os.environ.get("OPENAI_API_KEY", "none"),
+            base_url=base_url or None,
+        )
+
+    def complete(self, prompt: str) -> str:
+        messages = []
+        if self.system is not None:
+            messages.append({"role": "system", "content": self.system})
+        messages.append({"role": "user", "content": prompt})
+
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            **self.params,
+        )
+        return (response.choices[0].message.content or "").strip()
 
 
 class HuggingFaceGenerator(Generator):

@@ -6,6 +6,16 @@
     "api_key": "abcd"
   },
 
+  "_openai_generation_example": {
+    "_note": "Use backend 'openai' for OpenAI or any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, custom deployed models). 'custom' is an alias for the same backend.",
+    "backend": "openai",
+    "model": "gpt-4o",
+    "api_key": "sk-...",
+    "temperature": 0.7,
+    "_custom_endpoint_note": "For a self-hosted or deployed model, add base_url pointing to your /v1 endpoint:",
+    "base_url": "http://localhost:11434/v1"
+  },
+
   "grading": {
     "backend": "mistral",
     "model": "ministral-8b-2410",
