@@ -73,6 +73,8 @@ jobs:
 
       - name: Test binary
         shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
         run: ./dist/knox-rt${{ matrix.ext }} --help
 
       - name: Upload binary to release
