@@ -201,21 +201,6 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                                concurrency=concurrency)
                 )
 
-        elif isinstance(entry, dict) and "dataset" in entry:
-            # Static dataset plugin — loads prompts from a file.
-            plugins.append(DatasetPlugin(
-                dataset_path=entry["dataset"],
-                detector_id=entry.get("detector", "prompt-injection"),
-                purpose=purpose,
-                column=entry.get("column"),
-                category_column=entry.get("category_column", "category"),
-                # None → DatasetPlugin defaults to all rows in the file.
-                num_tests=int(c) if (c := entry.get("count", entry.get("num_tests"))) is not None else None,
-                plugin_id=entry.get("id", "dataset"),
-                severity=str(entry.get("severity", "")),
-                sample=entry.get("sample", True),
-            ))
-
         elif isinstance(entry, dict) and "id" in entry:
             pid_or_cat = entry["id"]
 
@@ -277,6 +262,27 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                                        max_chars=per_max_chars,
                                        concurrency=concurrency)
                         )
+
+        elif isinstance(entry, dict) and "dataset" in entry:
+            # Standalone dataset plugin — no id: key, detector: is required.
+            _detector = entry.get("detector")
+            if not _detector:
+                raise ValueError(
+                    f"dataset entry '{entry.get('dataset')}' is missing a 'detector:' key — "
+                    "set it to the plugin id whose grader should evaluate these prompts "
+                    "(e.g. detector: sql-injection), or add a category_column to the file."
+                )
+            plugins.append(DatasetPlugin(
+                dataset_path=entry["dataset"],
+                detector_id=_detector,
+                purpose=purpose,
+                column=entry.get("column"),
+                category_column=entry.get("category_column", "category"),
+                num_tests=int(c) if (c := entry.get("count", entry.get("num_tests"))) is not None else None,
+                plugin_id=entry.get("id", "dataset"),
+                severity=str(entry.get("severity", "")),
+                sample=entry.get("sample", True),
+            ))
 
     strategies: list[Strategy] = [
         get_strategy(s) for s in data.get("strategies", [])

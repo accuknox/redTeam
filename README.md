@@ -330,7 +330,8 @@ plugins:
     severity: high                  # to all 9 security sub-plugins
     num_tests: 3
 
-  - dataset: datasets/harmbench.csv # static dataset
+  - dataset: datasets/harmbench.csv # static dataset — detector: is required
+    detector: prompt-injection       # which grader evaluates these prompts
     column: prompt
     count: 100
 

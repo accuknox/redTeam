@@ -29,7 +29,7 @@ from pathlib import Path
 from config import load_config
 from detectors import get_detector
 from inference import CallableProvider, RestProvider
-from plugins import CATEGORIES, all_plugin_ids, get_plugin, resolve_plugin_ids
+from plugins import CATEGORIES, _REGISTRY, all_plugin_ids, category_for_plugin, get_plugin, resolve_plugin_ids
 from strategies import _REGISTRY as _STRATEGY_REGISTRY, apply_strategies, get_strategy
 
 
@@ -503,13 +503,22 @@ def main(argv: list[str] | None = None) -> None:
                 else:
                     print(f"       {verdict}  {result.reason}")
 
+                cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
+                # objective: prefer metadata (custom plugins set it there), fall back
+                # to the class-level attribute for registry plugins (covers dataset cases).
+                objective = case.metadata.get("objective") or None
+                if not objective:
+                    cls = _REGISTRY.get(case.plugin_id) or _REGISTRY.get(case.detector_id)
+                    objective = getattr(cls, "objective", None) or None
                 all_records.append({
                     "run_id":           run_id,
                     "timestamp":        _now(),
                     "target":           tgt.name,
                     "plugin_id":        case.plugin_id,
                     "detector_id":      case.detector_id,
-                    "objective":        case.metadata.get("objective") or None,
+                    "category":         cat_key,
+                    "category_label":   cat_label,
+                    "objective":        objective,
                     "frameworks":       case.frameworks or None,
                     "controls":         case.controls or None,
                     "severity":         case.severity or None,
