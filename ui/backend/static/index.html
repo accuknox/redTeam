@@ -1186,10 +1186,13 @@ let categoryPluginMap = {};     // {categoryKey: [plugin.id, ...]}
 
 async function loadCategories() {
   try {
+    console.log('Loading categories...');
     const categories = await fetch(`${API}/api/categories`).then(r => r.json());
+    console.log('Categories fetched:', categories.length, 'categories');
     renderCategories(categories);
+    console.log('Categories rendered');
     // Populate strategies for each category after rendering
-    setTimeout(() => populateCategoryStrategies(), 0);
+    setTimeout(() => populateCategoryStrategies(), 50);
   } catch (e) {
     console.error('Failed to load categories:', e);
   }
@@ -1197,9 +1200,15 @@ async function loadCategories() {
 
 function renderCategories(categories) {
   const container = document.getElementById('categories-container');
+  if (!container) {
+    console.error('categories-container not found!');
+    return;
+  }
   container.innerHTML = '';
+  console.log('Rendering', categories.length, 'categories');
 
   categories.forEach(cat => {
+    console.log(`Rendering category: ${cat.key} with ${cat.plugins.length} plugins`);
     // Track plugins in this category
     categoryPluginMap[cat.key] = cat.plugins.map(p => p.id);
 
