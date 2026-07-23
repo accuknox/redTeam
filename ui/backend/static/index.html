@@ -663,7 +663,6 @@ async function init() {
     plugins = pl; categories = cat; strategies = st; frameworks = fw;
     renderLanguages(langs);
     renderFrameworks();
-    renderCategories();
     renderStrategies();
     document.getElementById('api-dot').className = 'status-dot';
     document.getElementById('api-status').textContent = 'connected';
@@ -713,44 +712,6 @@ function toggleFramework(key, btn) {
   updateConfig();
 }
 
-function renderCategories() {
-  const grid = document.getElementById('cat-grid');
-  const panels = document.getElementById('plugin-panels');
-  categories.forEach(cat => {
-    const btn = document.createElement('button');
-    btn.className = 'cat-btn';
-    btn.dataset.cat = cat.key;
-    btn.innerHTML = `<strong>${cat.key}</strong><small>${cat.plugin_count} plugins</small>`;
-    btn.onclick = () => toggleCat(cat.key, btn);
-    grid.appendChild(btn);
-
-    const panel = document.createElement('div');
-    panel.className = 'plugin-list';
-    panel.id = `cat-${cat.key}`;
-    cat.plugins.forEach(p => {
-      const item = document.createElement('label');
-      item.className = 'plugin-item';
-      const sev = p.severity || 'medium';
-      item.innerHTML = `
-        <input type="checkbox" value="${p.id}" onchange="onPluginToggle(this)">
-        <div style="flex:1;min-width:0">
-          <div class="pid">${p.id}</div>
-          <div class="obj">${p.objective ? p.objective.slice(0,80) : ''}</div>
-        </div>
-        <span class="sev-badge sev-${sev}">${sev}</span>`;
-      panel.appendChild(item);
-    });
-    panels.appendChild(panel);
-  });
-}
-
-function toggleCat(key, btn) {
-  const panel = document.getElementById(`cat-${key}`);
-  const isOpen = panel.classList.contains('open');
-  document.querySelectorAll('.plugin-list.open').forEach(p => p.classList.remove('open'));
-  document.querySelectorAll('.cat-btn.active').forEach(b => b.classList.remove('active'));
-  if (!isOpen) { panel.classList.add('open'); btn.classList.add('active'); }
-}
 
 function onPluginToggle(cb) {
   if (cb.checked) selectedPlugins.add(cb.value);
