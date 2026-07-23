@@ -7,6 +7,35 @@ them against a target system, and grades the responses with an LLM-as-a-judge.
 
 ---
 
+## 🚀 Quick Start
+
+### CLI (Command Line)
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# List available plugins
+knox-rt --list-plugins
+
+# Run a basic scan
+knox-rt --plugins prompt-injection --num-tests 5 --purpose "A chatbot"
+```
+
+### 🎨 Web UI (Recommended for interactive setup)
+```bash
+cd ui
+bash run.sh
+```
+Visit **http://localhost:8080** to:
+- 📱 Configure targets interactively (OpenAI, REST, local function)
+- 🔌 Browse and customize plugins by category
+- ⚙️ Set up generation and grading models
+- 📊 View real-time scan progress and results
+
+See [ui/README.md](ui/README.md) for detailed UI setup instructions.
+
+---
+
 ## Core idea
 
 Plugins don't store static attack strings. Each plugin holds a **meta-prompt** —
@@ -35,6 +64,15 @@ parsing, and dedup are identical across all plugins.
 ├── run.py                   # config-driven entry point
 ├── cli.py                   # knox-rt CLI (knox-rt command)
 ├── requirements.txt
+│
+├── ui/                      # WEB UI (interactive frontend for Knox-RT)
+│   ├── run.sh               #   startup script (auto-installs deps, starts server)
+│   ├── README.md            #   UI documentation and setup guide
+│   └── backend/             
+│       ├── main.py          #   FastAPI backend server
+│       ├── requirements.txt  #   UI dependencies
+│       └── static/
+│           └── index.html   #   self-contained frontend (no build needed)
 │
 ├── inference/               # THE TARGET (system under test)
 │   ├── provider.py          #   Provider (ABC), RestProvider, CallableProvider, ScriptedProvider
