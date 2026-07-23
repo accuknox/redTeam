@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "redTeam"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
