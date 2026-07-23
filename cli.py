@@ -209,36 +209,30 @@ def _dict_to_tc(d: dict):
 
 
 def _load_prompts(path: Path) -> tuple[dict, list]:
-    header: dict = {}
-    cases: list = []
-    for i, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
-        raw = raw.strip()
-        if not raw:
-            continue
-        obj = json.loads(raw)
-        if i == 0 and "_knox_rt_version" in obj:
-            header = obj
-        else:
-            cases.append(_dict_to_tc(obj))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if "_knox_rt_version" in data:
+        # structured JSON format
+        header = {k: v for k, v in data.items() if k != "prompts"}
+        cases  = [_dict_to_tc(d) for d in data.get("prompts", [])]
+    else:
+        # plain array of prompt objects (no header)
+        header = {}
+        cases  = [_dict_to_tc(d) for d in (data if isinstance(data, list) else [])]
     return header, cases
 
 
 def _save_prompts(path: Path, purpose: str, strategy_ids: list[str], cases: list) -> Path:
-    # Always write as JSONL (one object per line) — force .jsonl extension so
-    # editors don't try to parse it as a single JSON document and fail on line 2.
-    if path.suffix.lower() == ".json":
-        path = path.with_suffix(".jsonl")
-    header = {
+    if path.suffix.lower() == ".jsonl":
+        path = path.with_suffix(".json")
+    payload = {
         "_knox_rt_version": "1.0",
         "_generated_at":    _now(),
         "_purpose":         purpose,
         "_strategies":      strategy_ids,
+        "prompts":          [_tc_to_dict(tc) for tc in cases],
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        f.write(json.dumps(header) + "\n")
-        for tc in cases:
-            f.write(json.dumps(_tc_to_dict(tc)) + "\n")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.rename(path)
     return path
 
@@ -412,7 +406,9 @@ def main(argv: list[str] | None = None) -> None:
             plugin_gen_time[plugin.id] = gen_t
             all_plugin_results.append((plugin, cases))
             src = "cached" if not gen_t else f"{gen_t:.1f}s"
-            print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]")
+            plugin_strats = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
+            strat_info = f" + {len(plugin_strats)} strategy(ies)" if plugin_strats else ""
+            print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}")
     else:
         with ThreadPoolExecutor(max_workers=cfg.concurrency) as pool:
             futures = {
@@ -428,7 +424,9 @@ def main(argv: list[str] | None = None) -> None:
                 plugin_gen_time[plugin.id] = gen_t
                 all_plugin_results.append((plugin, cases))
                 src = "cached" if not gen_t else f"{gen_t:.1f}s"
-                print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]")
+                plugin_strats = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
+                strat_info = f" + {len(plugin_strats)} strategy(ies)" if plugin_strats else ""
+                print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}")
     print()
 
     # --- build final case lists (apply only strategies missing from file) -----
@@ -444,7 +442,11 @@ def main(argv: list[str] | None = None) -> None:
         file_strat = [tc for tc in file_cases.get(plugin.id, [])
                       if tc.metadata.get("strategy")]
         done = {tc.metadata["strategy"] for tc in file_strat}
-        missing = [s for s in cfg.strategies if s.id not in done]
+
+        # Use per-plugin strategies if defined, otherwise fall back to global strategies
+        plugin_strategies = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
+
+        missing = [s for s in plugin_strategies if s.id not in done]
         # apply_strategies returns originals + augmented; use it as the full list.
         all_strat = apply_strategies(base_cases, missing, cfg.generation) if missing else base_cases
         final_cases = all_strat + file_strat
@@ -476,11 +478,11 @@ def main(argv: list[str] | None = None) -> None:
 
         by_plugin[plugin.id] = {"total": 0, "vulnerable": 0}
 
+        total_cases = len(augmented)
         for i, case in enumerate(augmented, 1):
             strategy = case.metadata.get("strategy")
             sev_tag   = f"[{case.severity.upper()}] " if case.severity else ""
             strat_tag = f"[{strategy}] " if strategy else ""
-            print(f"  [{i}] {sev_tag}{strat_tag}{case.prompt}")
 
             # Run against every target (single loop when not multi-target)
             for tgt in cfg.targets:
@@ -499,9 +501,9 @@ def main(argv: list[str] | None = None) -> None:
 
                 verdict = "RESISTED " if result.passed else "VULNERABLE"
                 if is_multi:
-                    print(f"       {tgt.name:<25} -> {verdict}  {result.reason}")
+                    print(f"  [{i}/{total_cases}] {sev_tag}{strat_tag}{tgt.name:<20} {verdict}")
                 else:
-                    print(f"       {verdict}  {result.reason}")
+                    print(f"  [{i}/{total_cases}] {sev_tag}{strat_tag}{verdict}")
 
                 cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
                 # objective: prefer metadata (custom plugins set it there), fall back
@@ -511,27 +513,34 @@ def main(argv: list[str] | None = None) -> None:
                     cls = _REGISTRY.get(case.plugin_id) or _REGISTRY.get(case.detector_id)
                     objective = getattr(cls, "objective", None) or None
                 all_records.append({
-                    "run_id":           run_id,
-                    "timestamp":        _now(),
-                    "target":           tgt.name,
-                    "plugin_id":        case.plugin_id,
-                    "detector_id":      case.detector_id,
-                    "category":         cat_key,
-                    "category_label":   cat_label,
-                    "objective":        objective,
-                    "frameworks":       case.frameworks or None,
-                    "controls":         case.controls or None,
-                    "severity":         case.severity or None,
-                    "strategy":         strategy,
-                    "attack":           case.prompt,
-                    "original_prompt":  case.metadata.get("original_prompt"),
-                    "response":         response,
-                    "passed":           result.passed,
-                    "score":            result.score,
-                    "reason":           result.reason,
-                    "purpose":          cfg.purpose,
-                    "generation_model": cfg.generation.name,
-                    "grading_model":    cfg.grading.name,
+                    "run_id":                   run_id,
+                    "timestamp":                _now(),
+                    "target":                   tgt.name,
+                    "plugin_id":                case.plugin_id,
+                    "detector_id":              case.detector_id,
+                    "category":                 cat_key,
+                    "category_label":           cat_label,
+                    "objective":                objective,
+                    "frameworks":               case.frameworks or None,
+                    "controls":                 case.controls or None,
+                    "severity":                 case.severity or None,
+                    "strategy":                 strategy,
+                    "attack":                   case.prompt,
+                    "original_prompt":          case.metadata.get("original_prompt"),
+                    "response":                 response,
+                    "passed":                   result.passed,
+                    "score":                    result.score,
+                    "reason":                   result.reason,
+                    "purpose":                  cfg.purpose,
+                    "generation_model":         cfg.generation.name,
+                    "grading_model":            cfg.grading.name,
+                    # ── customisation params ──────────────────────────────────
+                    "language":                 case.metadata.get("language"),
+                    "language_code":            case.metadata.get("language_code"),
+                    "max_chars":                case.metadata.get("max_chars"),
+                    "num_tests":                case.metadata.get("num_tests"),
+                    "generation_instructions":  case.metadata.get("generation_instructions"),
+                    "examples":                 case.metadata.get("examples"),
                 })
 
                 total += 1
