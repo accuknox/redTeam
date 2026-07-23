@@ -18,6 +18,15 @@ from __future__ import annotations
 
 import csv
 import json
+
+_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English", "es": "Spanish", "zh": "Chinese (Simplified)",
+    "fr": "French",  "de": "German",  "ar": "Arabic",
+    "ru": "Russian", "ja": "Japanese","pt": "Portuguese",
+    "ko": "Korean",  "hi": "Hindi",   "it": "Italian",
+    "nl": "Dutch",   "tr": "Turkish", "pl": "Polish",
+    "vi": "Vietnamese", "th": "Thai", "id": "Indonesian",
+}
 import random
 import re
 from abc import ABC, abstractmethod
@@ -131,6 +140,7 @@ class RedteamPlugin(ABC):
         max_attempts: int = 5,
         concurrency: int = 1,
         config: dict[str, Any] | None = None,
+        strategies: list | None = None,
     ) -> None:
         if not self.id:
             raise ValueError(f"{type(self).__name__} must set a class-level `id`")
@@ -145,6 +155,7 @@ class RedteamPlugin(ABC):
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.config = dict(config or {})
+        self.strategies = strategies or []  # per-plugin strategies
         self._env = jinja2.Environment(undefined=jinja2.StrictUndefined)
 
     # ---- the one thing concrete LLM plugins implement ---------------------
@@ -210,12 +221,14 @@ class RedteamPlugin(ABC):
 
     def _render(self, n: int) -> str:
         template = self._env.from_string(self.get_template())
+        lang = self.language or ""
+        lang_name = _LANGUAGE_NAMES.get(lang.lower(), lang)
         return template.render(
             purpose=self.purpose,
             n=n,
             examples=self.examples,
             generation_instructions=self.generation_instructions,
-            language=self.language,
+            language=lang_name,
             **self.config,
         )
 
@@ -236,12 +249,22 @@ class RedteamPlugin(ABC):
         from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS, PLUGIN_SEVERITY  # deferred — avoids circular import
         if self.max_chars and len(prompt) > self.max_chars:
             prompt = prompt[: self.max_chars]
+        lang = self.language or ""
         return TestCase(
             prompt=prompt,
             plugin_id=self.id,
             detector_id=self.detector_id or self.id,
-            metadata={"purpose": self.purpose, "plugin_config": self.config,
-                      "objective": self.get_objective()},
+            metadata={
+                "purpose": self.purpose,
+                "plugin_config": self.config,
+                "objective": self.get_objective(),
+                "language": _LANGUAGE_NAMES.get(lang.lower(), lang) if lang else None,
+                "language_code": lang or None,
+                "max_chars": self.max_chars or None,
+                "generation_instructions": self.generation_instructions or None,
+                "examples": self.examples or None,
+                "num_tests": self.num_tests,
+            },
             severity=self.severity or PLUGIN_SEVERITY.get(self.id, ""),
             frameworks=PLUGIN_FRAMEWORKS.get(self.id, []),
             controls=PLUGIN_CONTROLS.get(self.id, []),

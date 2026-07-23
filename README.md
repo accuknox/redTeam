@@ -250,6 +250,81 @@ plugins:
 
 ---
 
+## REST API Debugger
+
+Before running a full scan, use `rest_debug.py` to test and validate your REST API template.
+
+**Template substitutions:**
+- `$INPUT` → replaced with the attack prompt (REQUIRED)
+- `$KEY` → replaced with api_key if provided (optional)
+
+```bash
+# Test Mistral API (with authentication)
+python rest_debug.py \
+  --endpoint https://api.mistral.ai/v1/chat/completions \
+  --template '{"model": "mistral-small-latest", "messages": [{"role": "user", "content": "$INPUT"}]}' \
+  --response-field "choices.0.message.content" \
+  --api-key sk-xxx
+
+# Test custom API (no auth needed, response_field auto-discovered)
+python rest_debug.py \
+  --endpoint http://localhost:8000/generate \
+  --template '{"prompt": "$INPUT", "max_tokens": 512}' \
+  --test-prompt "What is 2+2?"
+
+# Test with custom header using $KEY
+python rest_debug.py \
+  --endpoint http://my-api:8080/chat \
+  --template '{"prompt": "$INPUT"}' \
+  --headers '{"X-API-Key": "$KEY"}' \
+  --api-key my-secret-key
+```
+
+**The debugger:**
+- ✓ Shows the exact request being sent (with $INPUT replaced)
+- ✓ Displays the API's response structure (keys, types, values)
+- ✓ Validates your `response_field` path
+- ✓ Suggests `response_field` values if not provided
+- ✓ Shows helpful error messages with available keys at each level
+
+Use this **before** running a full scan to catch configuration issues early.
+
+---
+
+## Troubleshooting REST Targets
+
+**Error: `HTTP 401 Unauthorized`**
+```
+Hint: Invalid or missing API key. Check 'api_key' in your config.
+```
+→ Verify your API key is correct and has permission to access the endpoint.
+
+**Error: `HTTP 404 Not Found`**
+```
+Hint: Endpoint not found. Check 'name' (base URL) in your config.
+```
+→ The base URL is wrong. For Mistral: use `https://api.mistral.ai`, not the full `/v1/chat/completions` path.
+
+**Error: `Cannot extract field 'output.text' from response`**
+```
+Available keys: ['result', 'message']
+```
+→ Your `response_field` doesn't match the API's response format. Use the available keys or adjust the path.
+
+**Error: `API returned invalid JSON`**
+```
+Response: <html>502 Bad Gateway</html>
+```
+→ The API returned HTML (likely an error page). Check if the service is down or the endpoint is correct.
+
+**Error: `HTTP 429 Too Many Requests`**
+```
+Hint: Rate limited. Wait before retrying.
+```
+→ Add `delay: 1000` (milliseconds) to your config to space out requests.
+
+---
+
 ## Configuration
 
 `config.yaml` (or `config.json`) is the single source of run settings.
@@ -285,10 +360,38 @@ target:
   name: gpt-4o              # model name (uses api.openai.com)
   api_key: sk-...
   # type: openai + name: http://localhost:11434  →  Ollama / vLLM (+ model: llama3)
-  # type: rest   + config: my_api.yaml           →  generic REST (any API shape)
+  # type: rest   + name: http://my-api:8080     →  generic REST (OpenAI-compatible or custom template)
   # type: function + name: my_module#invoke      →  local Python callable
 
 num_tests: 5                # test cases per plugin (global default)
+
+# ── REST target (custom API format) ───────────────────────────────────────────
+# For OpenAI-compatible endpoints, just set type: rest + name: URL.
+# For custom APIs, provide:
+#
+# target:
+#   type: rest
+#   name: http://localhost:8000
+#   model: gemma-4-31b                   # optional model name for context
+#   request: {"prompt": "$INPUT", "max_tokens": 512}    # $INPUT = attack prompt
+#                                        # Single quotes also work: {'prompt': '$INPUT'}
+#   response_field: "output.text"        # OPTIONAL — auto-detected if empty
+#                                        # Auto-detection tries: response, output, text, message, content, ...
+#                                        # Set this only if auto-detection fails
+#   headers: {"Authorization": "Bearer $KEY"}  # $KEY = api_key value
+#   api_key: my-secret-key               # optional; used in $KEY substitution
+#
+# Response auto-detection:
+#   - Tries common fields: response, output, text, message, content
+#   - Tries OpenAI format: choices[0].message.content
+#   - Falls back to: first string value in response
+#   - Last resort: entire response as JSON string
+#
+# If the API returns unexpected JSON or missing fields, knox-rt will show:
+#   - The actual response structure
+#   - Which field path failed
+#   - Available keys at that level
+#   - Helpful hints for fixing response_field
 
 # ── Global generation options ─────────────────────────────────────────────────
 # All of these can also be overridden per-plugin (see Plugin configuration).

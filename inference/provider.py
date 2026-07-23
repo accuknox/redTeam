@@ -72,8 +72,17 @@ class Provider(ABC):
     def generate(self, prompt: "str | list[Message]", *, system: str | None = None) -> str:
         """Send a prompt (string or message list) to the target and return its
         text response. A multi-turn message list supports multi-step strategies."""
+        import time as _time
         messages = self._coerce_messages(prompt, system if system is not None else self.system)
-        return self._postprocess(self._complete(messages))
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                return self._postprocess(self._complete(messages))
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    _time.sleep(2 ** attempt)  # 1s, 2s
+        raise last_exc
 
     # ---- backend hook (the only thing subclasses must implement) ----------
 
@@ -186,15 +195,37 @@ class RestProvider(Provider):
 
         ``"output.text"``              → ``data["output"]["text"]``
         ``"choices.0.message.content"``→ ``data["choices"][0]["message"]["content"]``
+
+        Raises ValueError with helpful diagnostics if field is not found.
         """
-        for part in field.split("."):
-            data = data[int(part)] if isinstance(data, list) else data[part]
-        return str(data)
+        import json as _json
+        parts = field.split(".")
+        current = data
+        path_taken = []
+
+        try:
+            for part in parts:
+                path_taken.append(part)
+                if isinstance(current, list):
+                    idx = int(part)
+                    current = current[idx]
+                else:
+                    current = current[part]
+            return str(current)
+        except (KeyError, IndexError, ValueError, TypeError) as e:
+            # Show what we found vs what was expected
+            raise ValueError(
+                f"Cannot extract field '{field}' from response.\n"
+                f"Failed at: {'.'.join(path_taken)}\n"
+                f"Available keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}\n"
+                f"Full response:\n{_json.dumps(data, indent=2)[:1000]}"
+            )
 
     # ---- core ----------------------------------------------------------------
 
     def _complete(self, messages: list[Message]) -> str:
         import requests  # lazy — not a hard dep for offline use
+        import json as _json
 
         headers = self._build_headers()
 
@@ -219,11 +250,81 @@ class RestProvider(Provider):
 
         http_fn = getattr(requests, self.method)
         resp = http_fn(url, json=body, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
 
+        # Handle HTTP errors with helpful messages
+        if not resp.ok:
+            error_hints = {
+                401: "Invalid or missing API key. Check 'api_key' in your config.",
+                403: "Permission denied. Check your API key has the right scopes.",
+                404: "Endpoint not found. Check 'name' (base URL) in your config.",
+                429: "Rate limited. Wait before retrying.",
+                500: "Server error. Check if the API is running.",
+                502: "Bad gateway. The API server may be down.",
+                503: "Service unavailable. Try again later.",
+            }
+            hint = error_hints.get(resp.status_code, "Check the API endpoint and credentials.")
+            raise ValueError(
+                f"HTTP {resp.status_code} {resp.reason}\n"
+                f"URL: {url}\n"
+                f"Response: {resp.text[:500]}\n"
+                f"Hint: {hint}"
+            )
+
+        # Parse and validate response
+        try:
+            data = resp.json()
+        except _json.JSONDecodeError as e:
+            raise ValueError(
+                f"API returned invalid JSON. Status {resp.status_code}. "
+                f"Response: {resp.text[:500]}\nError: {e}"
+            )
+
+        # Extract response text (auto-detect if response_field not specified)
         if self.response_field:
-            return self._extract(resp.json(), self.response_field)
-        return resp.json()["choices"][0]["message"]["content"]
+            # User specified field path
+            try:
+                return self._extract(data, self.response_field)
+            except (KeyError, IndexError, ValueError, TypeError) as e:
+                raise ValueError(f"Cannot extract field '{self.response_field}': {e}")
+
+        # Auto-detect: try common response patterns
+        common_paths = [
+            "response",                      # custom: {"response": "text"}
+            "output",                        # custom: {"output": "text"}
+            "text",                          # custom: {"text": "text"}
+            "result",                        # custom: {"result": "text"}
+            "message",                       # custom: {"message": "text"}
+            "content",                       # custom: {"content": "text"}
+            "choices.0.message.content",     # OpenAI format
+            "choices.0.text",                # Some models
+            "data.0.message.content",        # Alternative format
+        ]
+
+        for path in common_paths:
+            try:
+                return self._extract(data, path)
+            except (KeyError, IndexError, ValueError, TypeError):
+                continue
+
+        # Last resort: return first string value in response
+        def find_first_string(obj):
+            if isinstance(obj, str):
+                return obj
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    result = find_first_string(v)
+                    if result:
+                        return result
+            elif isinstance(obj, list) and obj:
+                return find_first_string(obj[0])
+            return None
+
+        text = find_first_string(data)
+        if text:
+            return text
+
+        # If still nothing, return full response as string
+        return _json.dumps(data)
 
     @classmethod
     def from_config_file(cls, path: "str | Path", *, api_key: str | None = None) -> "RestProvider":

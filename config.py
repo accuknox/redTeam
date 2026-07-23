@@ -45,6 +45,25 @@ from inference import CallableProvider, Provider, RestProvider
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 
 
+def _parse_json_flexible(obj: Any) -> Any:
+    """Parse JSON string or object. Converts single quotes to double quotes.
+
+    Allows users to paste {'key': 'value'} (with single quotes) without escaping.
+    Returns the parsed object or the original if it's already an object.
+    """
+    if not isinstance(obj, str):
+        return obj  # already an object
+
+    import json
+    try:
+        # Convert single quotes to double quotes if no double quotes present
+        if "'" in obj and '"' not in obj:
+            obj = obj.replace("'", '"')
+        return json.loads(obj)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON: {e}")
+
+
 def build_generator(spec: dict[str, Any]) -> Generator:
     """Build a generation/grading model from a config block.
 
@@ -91,6 +110,13 @@ def build_target(spec: dict[str, Any]) -> Provider:
         req_template = spec.pop("request", None)
         response_field = spec.pop("response_field", None)
         extra_headers = spec.pop("headers", {})
+
+        # Parse JSON strings with flexible quote handling
+        if req_template:
+            req_template = _parse_json_flexible(req_template)
+        if extra_headers:
+            extra_headers = _parse_json_flexible(extra_headers)
+
         return RestProvider(
             base_url=url, model=model,
             req_template=req_template, response_field=response_field,
@@ -125,7 +151,9 @@ def build_judge(spec: dict[str, Any]) -> Judge:
     if backend == "huggingface":
         return HuggingFaceJudge(model, **spec)
     if backend == "local":
-        url = spec.pop("url")
+        url = spec.pop("url", None) or spec.pop("base_url", None)
+        if not url:
+            raise ValueError("local judge requires a 'url' or 'base_url' key")
         return LocalJudge(base_url=url, model=model, **spec)
     raise ValueError(
         f"unknown judge backend {backend!r} (expected anthropic | mistral | huggingface | local)"
@@ -226,6 +254,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 per_instr     = str(entry.get("generation_instructions", global_instructions))
                 per_lang      = str(entry.get("language", global_language))
                 per_max_chars = int(entry.get("max_chars", global_max_chars) or 0)
+                per_strats    = [get_strategy(s) for s in entry.get("strategies", [])]
 
                 if pid_or_cat.startswith("custom:"):
                     # Custom plugin — user supplies the adversarial objective directly.
@@ -248,6 +277,7 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                         language=per_lang,
                         max_chars=per_max_chars,
                         concurrency=concurrency,
+                        strategies=per_strats,
                     ))
                 else:
                     # A category/framework key in `id` expands to all its sub-plugins.
@@ -260,7 +290,8 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                                        generation_instructions=per_instr,
                                        language=per_lang,
                                        max_chars=per_max_chars,
-                                       concurrency=concurrency)
+                                       concurrency=concurrency,
+                                       strategies=per_strats)
                         )
 
         elif isinstance(entry, dict) and "dataset" in entry:

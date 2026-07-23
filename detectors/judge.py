@@ -184,7 +184,7 @@ class LocalJudge(Judge):
         **params: Any,
     ) -> None:
         self.name = model
-        self.base_url = base_url.rstrip("/")
+        self.base_url = base_url.rstrip("/").removesuffix("/v1")
         self.model = model
         self.api_key = api_key
         self.temperature = temperature

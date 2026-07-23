@@ -31,6 +31,17 @@
     "name": "test_func#check_api_key"
   },
 
+  "_rest_custom_target_example": {
+    "_note": "For custom REST APIs (non-OpenAI format), optionally provide request template, response_field, and custom headers. See example_rest_custom.json for full example.",
+    "type": "rest",
+    "name": "http://localhost:8000",
+    "model": "gemma-4-31b",
+    "request": {"prompt": "$INPUT", "max_tokens": 512},
+    "response_field": "text",
+    "headers": {"Authorization": "Bearer $KEY"},
+    "api_key": "my-api-key"
+  },
+
   "_multi_target_example": {
     "_note": "Replace 'target' with 'targets' (plural) to compare multiple models in one run. 'purpose' must be at the top level when using targets. Each entry needs a 'label' that appears in output and the comparison summary.",
     "targets": [
