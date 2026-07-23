@@ -9,30 +9,42 @@ them against a target system, and grades the responses with an LLM-as-a-judge.
 
 ## 🚀 Quick Start
 
-### CLI (Command Line)
+### Prerequisites
 ```bash
-# Install dependencies
+# 1. Install core dependencies (required for both CLI and UI)
 pip install -r requirements.txt
 
+# 2. (Optional) Set up API keys for generation/grading backends
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export MISTRAL_API_KEY="..."
+```
+
+### Option A: CLI (Command Line)
+```bash
 # List available plugins
 knox-rt --list-plugins
 
 # Run a basic scan
 knox-rt --plugins prompt-injection --num-tests 5 --purpose "A chatbot"
+
+# More examples
+knox-rt --plugins security --strategies base64,fiction -o results.json
 ```
 
-### 🎨 Web UI (Recommended for interactive setup)
+### Option B: 🎨 Web UI (Recommended for interactive setup)
 ```bash
 cd ui
 bash run.sh
 ```
-Visit **http://localhost:8080** to:
+
+Then visit **http://localhost:8080** to:
 - 📱 Configure targets interactively (OpenAI, REST, local function)
 - 🔌 Browse and customize plugins by category
 - ⚙️ Set up generation and grading models
 - 📊 View real-time scan progress and results
 
-See [ui/README.md](ui/README.md) for detailed UI setup instructions.
+See [ui/README.md](ui/README.md) for detailed UI documentation and troubleshooting.
 
 ---
 
