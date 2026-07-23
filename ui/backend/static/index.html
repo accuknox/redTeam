@@ -1,0 +1,1639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knox-RT — Red Team Scanner</title>
+<style>
+/* ── Tokens ──────────────────────────────────────────────────────────────── */
+:root {
+  --bg:         #0D1117;
+  --surface:    #161B22;
+  --surface2:   #1C2333;
+  --border:     #30363D;
+  --text:       #E6EDF3;
+  --text-muted: #7D8590;
+  --accent:     #DC2626;
+  --accent-dim: #7F1D1D;
+  --green:      #22C55E;
+  --green-dim:  #14532D;
+  --yellow:     #EAB308;
+  --radius:     6px;
+  --mono:       ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, monospace;
+  --sans:       -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:         #F3F4F6;
+    --surface:    #FFFFFF;
+    --surface2:   #F9FAFB;
+    --border:     #E5E7EB;
+    --text:       #111827;
+    --text-muted: #6B7280;
+    --accent:     #DC2626;
+    --accent-dim: #FEE2E2;
+    --green:      #16A34A;
+    --green-dim:  #DCFCE7;
+    --yellow:     #CA8A04;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#0D1117;--surface:#161B22;--surface2:#1C2333;--border:#30363D;
+  --text:#E6EDF3;--text-muted:#7D8590;--accent:#DC2626;--accent-dim:#7F1D1D;
+  --green:#22C55E;--green-dim:#14532D;--yellow:#EAB308;
+}
+:root[data-theme="light"] {
+  --bg:#F3F4F6;--surface:#FFFFFF;--surface2:#F9FAFB;--border:#E5E7EB;
+  --text:#111827;--text-muted:#6B7280;--accent:#DC2626;--accent-dim:#FEE2E2;
+  --green:#16A34A;--green-dim:#DCFCE7;--yellow:#CA8A04;
+}
+
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+input,select,textarea,button{font:inherit;color:inherit}
+button{cursor:pointer}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+#app{display:grid;grid-template-rows:48px 1fr;grid-template-columns:360px 1fr;height:100vh;overflow:hidden}
+#header{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border)}
+#sidebar{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);padding:0 0 80px}
+#main{overflow-y:auto;background:var(--bg);display:flex;flex-direction:column}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.logo{width:22px;height:22px;background:var(--accent);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;letter-spacing:-0.5px;flex-shrink:0}
+.brand{font-weight:600;font-size:15px;letter-spacing:-0.3px}
+.brand span{color:var(--accent)}
+.hdr-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.theme-btn{background:none;border:1px solid var(--border);border-radius:var(--radius);padding:3px 8px;font-size:12px;color:var(--text-muted)}
+.theme-btn:hover{border-color:var(--text-muted)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.status-dot.off{background:var(--text-muted)}
+#api-status{font-size:12px;color:var(--text-muted)}
+
+/* ── Section ─────────────────────────────────────────────────────────────── */
+.section{border-bottom:1px solid var(--border)}
+.section-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;user-select:none;gap:8px}
+.section-hdr:hover{background:var(--surface2)}
+.section-title{font-size:12px;font-weight:600;letter-spacing:0.4px;text-transform:uppercase;color:var(--text-muted)}
+.section-badge{font-size:11px;background:var(--accent);color:#fff;border-radius:10px;padding:1px 7px;font-weight:600}
+.section-badge.empty{background:var(--surface2);color:var(--text-muted)}
+.chevron{font-size:10px;color:var(--text-muted);transition:transform .15s}
+.chevron.open{transform:rotate(90deg)}
+.section-body{padding:10px 14px;display:none}
+.section-body.open{display:block}
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+.field{margin-bottom:10px}
+.field label{display:block;font-size:11px;font-weight:500;color:var(--text-muted);margin-bottom:4px;letter-spacing:0.2px}
+.field input,.field select,.field textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}
+.field textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:12px}
+.field select option{background:var(--surface)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+/* ── Plugin grid ─────────────────────────────────────────────────────────── */
+.cat-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.cat-btn{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:7px 8px;text-align:left;font-size:12px;cursor:pointer;transition:all .12s}
+.cat-btn:hover{border-color:var(--accent);color:var(--accent)}
+.cat-btn.active{border-color:var(--accent);background:var(--accent-dim);color:var(--text)}
+.cat-btn strong{display:block;font-weight:600}
+.cat-btn small{color:var(--text-muted);font-size:11px}
+.plugin-list{display:none;flex-direction:column;gap:2px;margin-bottom:10px}
+.plugin-list.open{display:flex}
+.plugin-item{display:flex;align-items:flex-start;gap:8px;padding:5px 6px;border-radius:4px;cursor:pointer}
+.plugin-item:hover{background:var(--surface2)}
+.plugin-item input[type=checkbox]{width:14px;height:14px;accent-color:var(--accent);margin-top:2px;flex-shrink:0}
+.plugin-item .pid{font-size:12px;font-weight:500;font-family:var(--mono)}
+.plugin-item .obj{font-size:11px;color:var(--text-muted);line-height:1.3}
+.sev-badge{font-size:10px;padding:1px 5px;border-radius:3px;font-weight:600;letter-spacing:0.3px;margin-left:auto;flex-shrink:0;text-transform:uppercase}
+.sev-critical{background:#7F1D1D;color:#FCA5A5}
+.sev-high{background:#78350F;color:#FCD34D}
+.sev-medium{background:#1C3252;color:#93C5FD}
+.sev-low{background:#1A2E1A;color:#86EFAC}
+.fw-pills{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.fw-pill{border:1px solid var(--border);border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer;background:var(--surface2);transition:all .12s}
+.fw-pill:hover,.fw-pill.on{border-color:var(--accent);background:var(--accent-dim);color:var(--text)}
+
+/* ── Strategy ────────────────────────────────────────────────────────────── */
+.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.strat-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:4px;cursor:pointer;font-size:12px}
+.strat-item:hover{background:var(--surface2)}
+.strat-item input[type=checkbox]{accent-color:var(--accent);width:13px;height:13px}
+
+/* ── Main tabs ───────────────────────────────────────────────────────────── */
+.tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface);padding:0 16px;flex-shrink:0}
+.tab{padding:10px 14px;font-size:13px;font-weight:500;border:none;background:none;color:var(--text-muted);border-bottom:2px solid transparent;cursor:pointer;margin-bottom:-1px}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-panel{display:none;flex:1;overflow-y:auto;padding:16px}
+.tab-panel.active{display:block}
+
+/* ── Config preview ──────────────────────────────────────────────────────── */
+#config-json{width:100%;height:calc(100vh - 160px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-family:var(--mono);font-size:12px;color:var(--text);resize:none;outline:none;line-height:1.6}
+.copy-btn{margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:5px 12px;font-size:12px;color:var(--text-muted)}
+.copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── Run panel ───────────────────────────────────────────────────────────── */
+.run-bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-shrink:0}
+.run-btn{background:var(--accent);color:#fff;border:none;border-radius:var(--radius);padding:8px 20px;font-size:14px;font-weight:600;letter-spacing:0.2px;transition:opacity .15s}
+.run-btn:hover{opacity:.85}
+.run-btn:disabled{opacity:.4;cursor:default}
+.stop-btn{background:none;border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px;font-size:13px;color:var(--text-muted)}
+.stop-btn:hover{border-color:var(--accent);color:var(--accent)}
+.run-status{font-size:12px;color:var(--text-muted)}
+#log{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-family:var(--mono);font-size:12px;line-height:1.7;height:320px;overflow-y:auto;color:var(--text);white-space:pre-wrap;word-break:break-all}
+.log-line{display:block}
+.log-line.vuln{color:#FCA5A5}
+.log-line.safe{color:#86EFAC}
+.log-line.hdr{color:#93C5FD;font-weight:600}
+
+/* ── Results ──────────────────────────────────────────────────────────────── */
+.results-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.stat-card .num{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+.stat-card .lbl{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:2px}
+.stat-card.danger .num{color:var(--accent)}
+.stat-card.safe .num{color:var(--green)}
+.plugin-table{width:100%;border-collapse:collapse;font-size:13px}
+.plugin-table th{text-align:left;padding:6px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600}
+.plugin-table td{padding:7px 10px;border-bottom:1px solid var(--border)}
+.plugin-table tr:hover td{background:var(--surface2)}
+.bar-wrap{background:var(--surface2);border-radius:3px;height:6px;min-width:80px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
+.bar-fill.safe{background:var(--green)}
+.pill{display:inline-block;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:600}
+.pill-vuln{background:var(--accent-dim);color:#FCA5A5}
+.pill-safe{background:var(--green-dim);color:#86EFAC}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-muted)}
+.empty-state .icon{font-size:32px;margin-bottom:10px;opacity:.4}
+.empty-state p{font-size:13px}
+
+/* ── Run button fixed ────────────────────────────────────────────────────── */
+.sidebar-footer{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:10px 14px}
+.sidebar-run-btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);padding:9px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.sidebar-run-btn:hover{opacity:.85}
+.sidebar-run-btn:disabled{opacity:.4;cursor:default}
+
+/* ── Plugin Categories ──────────────────────────────────────────────────── */
+.category-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.category-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+.category-header:hover {
+  background: var(--bg);
+}
+.category-icon {
+  font-size: 14px;
+  min-width: 16px;
+}
+.category-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13px;
+}
+.category-count {
+  font-size: 11px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-weight: 600;
+}
+.category-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform .15s;
+}
+.category-chevron.open {
+  transform: rotate(90deg);
+}
+.category-plugins {
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+}
+.category-plugins.open {
+  display: flex;
+}
+.plugin-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.plugin-row:hover {
+  background: var(--bg);
+}
+.plugin-row input[type=checkbox] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.plugin-info {
+  flex: 1;
+  min-width: 0;
+}
+.plugin-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+.plugin-obj {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+.plugin-sev {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.plugin-sev.critical { background: #7F1D1D; color: #FCA5A5; }
+.plugin-sev.high { background: #78350F; color: #FCD34D; }
+.plugin-sev.medium { background: #1C3252; color: #93C5FD; }
+.plugin-sev.low { background: #1A2E1A; color: #86EFAC; }
+
+
+/* ── Plugin Customization ───────────────────────────────────────────────── */
+.plugin-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+.plugin-customize-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 12px;
+  transition: color .15s;
+}
+.plugin-customize-btn:hover {
+  color: var(--accent);
+}
+.plugin-customize {
+  display: none;
+}
+.plugin-customize.open {
+  display: block;
+}
+.plugin-customize .field {
+  margin-bottom: 0;
+}
+.plugin-customize input,
+.plugin-customize select {
+  font-size: 12px;
+}
+
+
+/* ── Progress and Timer ────────────────────────────────────────────────── */
+#progress-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-size: 12px;
+}
+#progress-bar {
+  background: linear-gradient(90deg, var(--accent), #ff6b35);
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <header id="header">
+    <div class="logo">RT</div>
+    <span class="brand">Knox<span>-RT</span></span>
+    <div class="hdr-right">
+      <div class="status-dot off" id="api-dot"></div>
+      <span id="api-status">connecting…</span>
+      <button class="theme-btn" onclick="toggleTheme()">☀ / ☾</button>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+
+    <!-- Target -->
+    <div class="section">
+      <div class="section-hdr" onclick="toggle(this)">
+        <span class="section-title">Target</span>
+        <span class="chevron">›</span>
+      </div>
+      <div class="section-body open">
+        <div class="field">
+          <label>Purpose (describe the system under test)</label>
+          <textarea id="purpose" rows="2" placeholder="A customer-support assistant for an online bookstore."></textarea>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Type</label>
+            <select id="target-type" onchange="onTargetTypeChange()">
+              <option value="openai">OpenAI / Compatible</option>
+              <option value="rest">REST (custom)</option>
+              <option value="function">Local function</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Model / Name</label>
+            <input id="target-name" type="text" placeholder="gpt-4o">
+          </div>
+        </div>
+        <div class="field" id="target-model-field">
+          <label>Model (for vLLM / Ollama)</label>
+          <input id="target-model" type="text" placeholder="llama3">
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <input id="target-key" type="password" placeholder="sk-…  (optional)">
+        </div>
+        <div id="rest-advanced" style="margin-top:8px;display:none;padding:8px;background:var(--surface2);border-radius:var(--radius);border:1px solid var(--border)">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;font-weight:500;text-transform:uppercase;letter-spacing:0.4px">⚙ Custom REST API</div>
+          <div class="field">
+            <label>API Endpoint (base URL)</label>
+            <input id="rest-endpoint" type="text" placeholder="https://api.example.com  or  http://localhost:8000">
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label>Model Name</label>
+              <input id="rest-model-name" type="text" placeholder="gpt-4o  or  mistral-small">
+            </div>
+            <div class="field">
+              <label>Model ID (if different)</label>
+              <input id="rest-model-id" type="text" placeholder="optional: actual model identifier">
+            </div>
+          </div>
+          <div class="field">
+            <label>Request Payload (JSON with $INPUT)</label>
+            <textarea id="rest-payload" rows="3" placeholder='{"messages": [{"role": "user", "content": "$INPUT"}]}  or  {"prompt": "$INPUT", "max_tokens": 512}' style="font-family:var(--mono);font-size:11px"></textarea>
+          </div>
+          <div class="field">
+            <label>Response Field (optional — auto-detected if empty)</label>
+            <input id="rest-response-field" type="text" placeholder="choices.0.message.content  or  output.text">
+          </div>
+          <div class="field">
+            <label>Custom Headers (JSON, optional)</label>
+            <textarea id="rest-headers" rows="2" placeholder='{"Authorization": "Bearer $KEY"}  — $KEY will be replaced with API key' style="font-family:var(--mono);font-size:11px"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scan Settings (consolidated) -->
+    <div class="section">
+      <div class="section-hdr" onclick="toggle(this)">
+        <span class="section-title">Scan Settings</span>
+        <span class="chevron">›</span>
+      </div>
+      <div class="section-body open">
+        <!-- Basic parameters -->
+        <div class="row2">
+          <div class="field">
+            <label>Tests per Plugin</label>
+            <input id="num-tests" type="number" value="5" min="1" max="50">
+          </div>
+          <div class="field">
+            <label>Severity</label>
+            <select id="severity">
+              <option value="">— any —</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Language</label>
+            <select id="language">
+              <option value="">English (default)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Max Chars / Message</label>
+            <input id="max-chars" type="number" placeholder="none" min="50">
+          </div>
+        </div>
+        <div class="field">
+          <label>Delay Between Calls (ms)</label>
+          <input id="delay" type="number" placeholder="0" min="0">
+        </div>
+
+        <!-- Instructions & Examples -->
+        <div class="field">
+          <label>Generation Instructions (optional)</label>
+          <textarea id="gen-instructions" rows="2" placeholder="Focus on multi-turn attacks, authentication flows, etc."></textarea>
+        </div>
+        <div class="field">
+          <label>Seed Examples (optional)</label>
+          <textarea id="examples" rows="2" placeholder="Prompt: Ignore all previous instructions.&#10;Response: ..."></textarea>
+        </div>
+
+        <!-- Global overrides -->
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.4px">Global Overrides (apply to all plugins)</div>
+          <div class="field">
+            <label>Global Instructions</label>
+            <textarea id="global-instructions" rows="2" placeholder="Any constraints or instructions for all plugins…"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generation Backend -->
+    <div class="section">
+      <div class="section-hdr" onclick="toggle(this)">
+        <span class="section-title">Generator (Attack Model)</span>
+        <span class="chevron">›</span>
+      </div>
+      <div class="section-body open">
+        <div class="field">
+          <label>Backend</label>
+          <select id="gen-backend" onchange="onGenBackendChange()">
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+            <option value="mistral">Mistral</option>
+            <option value="custom">Custom / vLLM</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Model Name</label>
+          <input id="gen-model" type="text" placeholder="claude-opus-4-8 or gpt-4o or mistral-large">
+        </div>
+        <div class="field">
+          <label>API Key (if required)</label>
+          <input id="gen-key" type="password" placeholder="sk-…">
+        </div>
+        <div class="field" id="gen-url-field" style="display:none">
+          <label>Base URL (for custom/vLLM)</label>
+          <input id="gen-url" type="text" placeholder="http://localhost:8000/v1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Grading Backend -->
+    <div class="section">
+      <div class="section-hdr" onclick="toggle(this)">
+        <span class="section-title">Grader (Evaluation Model)</span>
+        <span class="chevron">›</span>
+      </div>
+      <div class="section-body open">
+        <div class="field">
+          <label>Backend</label>
+          <select id="grade-backend" onchange="onGradeBackendChange()">
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+            <option value="mistral">Mistral</option>
+            <option value="local">Local (OpenAI-compatible)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Model Name</label>
+          <input id="grade-model" type="text" placeholder="claude-opus-4-8 or gpt-4o or redteam-evaluator-gated">
+        </div>
+        <div class="field">
+          <label>API Key (if required)</label>
+          <input id="grade-key" type="password" placeholder="sk-…">
+        </div>
+        <div class="field" id="grade-url-field" style="display:none">
+          <label>Base URL (for local/OpenAI-compatible)</label>
+          <input id="grade-url" type="text" placeholder="http://localhost:8000/v1 or http://0.0.0.0:47923">
+        </div>
+      </div>
+    </div>
+
+    <!-- Plugins -->
+    <div class="section">
+      <div class="section-hdr" onclick="toggle(this)">
+        <span class="section-title">Plugins</span>
+        <span class="section-badge empty" id="plugin-badge">0</span>
+        <span class="chevron">›</span>
+      </div>
+      <div class="section-body" id="plugins-section">
+        
+        <!-- Compliance Frameworks (quick presets) -->
+        <div style="margin-bottom:12px">
+          <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;letter-spacing:0.4px">Compliance Frameworks</div>
+          <div class="fw-pills" id="fw-pills"></div>
+        </div>
+
+        <!-- Categories with plugins (loaded from API) -->
+        <div id="categories-container"></div>
+
+        <!-- Custom plugin -->
+        <details style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+          <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;padding:4px 0;font-weight:500">+ Add Custom Plugin</summary>
+          <div style="margin-top:8px">
+            <div class="field"><label>Plugin ID (custom:…)</label><input id="custom-id" placeholder="custom:my-attack"></div>
+            <div class="field"><label>Objective</label><textarea id="custom-obj" rows="2" placeholder="Convince the assistant to…"></textarea></div>
+            <div class="row2">
+              <div class="field"><label>Severity</label>
+                <select id="custom-sev"><option>medium</option><option>low</option><option>high</option><option>critical</option></select>
+              </div>
+              <div class="field"><label>Num tests</label><input id="custom-n" type="number" value="5" min="1"></div>
+            </div>
+            <button class="copy-btn" style="width:100%" onclick="addCustomPlugin()">Add Custom Plugin</button>
+          </div>
+        </details>
+
+        <div id="custom-plugins" style="margin-top:12px;display:flex;flex-direction:column;gap:4px"></div>
+      </div>
+    </div>
+
+    <!-- Strategies -->
+    <div class="section">
+      <div class="section-hdr" onclick="toggle(this)">
+        <span class="section-title">Strategies</span>
+        <span class="section-badge empty" id="strat-badge">0</span>
+        <span class="chevron">›</span>
+      </div>
+      <div class="section-body">
+        <div class="strat-grid" id="strat-grid"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-run-btn" id="sidebar-run-btn" onclick="startScan()">Run Scan</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main id="main">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('run',this)">Run</button>
+      <button class="tab" onclick="switchTab('results',this)">Results</button>
+      <button class="tab" onclick="switchTab('config',this)">Config JSON</button>
+    </div>
+
+    <!-- Run tab -->
+    <div class="tab-panel active" id="tab-run" style="display:flex;flex-direction:column;gap:12px">
+      <div class="run-bar">
+        <button class="run-btn" id="main-run-btn" onclick="startScan()">▶ Run Scan</button>
+        <button class="stop-btn" id="stop-btn" onclick="stopScan()" style="display:none">■ Stop</button>
+        <span class="run-status" id="run-status">Ready</span>
+      </div>
+      
+      <!-- Progress bar and timer -->
+      <div id="progress-section" style="display:none;gap:12px;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+              <span style="font-size:12px;color:var(--text-muted)">Progress</span>
+              <span id="progress-pct" style="font-size:12px;font-weight:600">0%</span>
+            </div>
+            <div style="width:100%;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden">
+              <div id="progress-bar" style="height:100%;width:0%;background:var(--accent);transition:width .3s"></div>
+            </div>
+          </div>
+          <span id="progress-timer" style="font-size:12px;color:var(--text-muted);min-width:40px">0s</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted)">
+          <span id="progress-cases">0 / 0</span> cases completed
+        </div>
+      </div>
+      
+      <div id="log"><!-- log lines appear here --></div>
+    </div>
+
+    <!-- Results tab -->
+    <div class="tab-panel" id="tab-results">
+      <div id="results-content">
+        <div class="empty-state">
+          <div class="icon">📊</div>
+          <p>Results will appear here after a scan completes.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Config tab -->
+    <div class="tab-panel" id="tab-config">
+      <button class="copy-btn" onclick="copyConfig()">Copy JSON</button>
+      <textarea id="config-json" readonly></textarea>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = 'http://localhost:8080';
+let plugins = [], categories = [], strategies = [], frameworks = [];
+let selectedPlugins = new Set();
+let customPlugins = [];
+let currentRunId = null;
+let sseSource = null;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const [pl, cat, st, fw, langs] = await Promise.all([
+      fetch(`${API}/api/plugins`).then(r => r.json()),
+      fetch(`${API}/api/categories`).then(r => r.json()),
+      fetch(`${API}/api/strategies`).then(r => r.json()),
+      fetch(`${API}/api/frameworks`).then(r => r.json()),
+      fetch(`${API}/api/languages`).then(r => r.json()),
+    ]);
+    plugins = pl; categories = cat; strategies = st; frameworks = fw;
+    renderLanguages(langs);
+    renderFrameworks();
+    renderCategories();
+    renderStrategies();
+    document.getElementById('api-dot').className = 'status-dot';
+    document.getElementById('api-status').textContent = 'connected';
+  } catch(e) {
+    document.getElementById('api-status').textContent = 'offline — start backend';
+  }
+}
+
+function renderLanguages(langs) {
+  const sel = document.getElementById('language');
+  langs.forEach(l => {
+    const o = document.createElement('option');
+    o.value = l.code; o.textContent = l.name;
+    sel.appendChild(o);
+  });
+}
+
+function renderFrameworks() {
+  const el = document.getElementById('fw-pills');
+  frameworks.forEach(fw => {
+    const btn = document.createElement('button');
+    btn.className = 'fw-pill';
+    btn.textContent = fw.key;
+    btn.title = fw.label;
+    btn.onclick = () => toggleFramework(fw.key, btn);
+    el.appendChild(btn);
+  });
+}
+
+function toggleFramework(key, btn) {
+  btn.classList.toggle('on');
+  if (btn.classList.contains('on')) {
+    // select all plugins belonging to this framework
+    plugins.filter(p => p.frameworks && p.frameworks.includes(key))
+           .forEach(p => selectedPlugins.add(p.id));
+  } else {
+    plugins.filter(p => p.frameworks && p.frameworks.includes(key) &&
+      !plugins.some(other => other.id !== p.id && selectedPlugins.has(other.id) &&
+        other.frameworks && other.frameworks.some(f => {
+          const pill = document.querySelector(`.fw-pill.on`);
+          return pill && other.frameworks.includes(pill.textContent);
+        }))
+    ).forEach(p => selectedPlugins.delete(p.id));
+  }
+  refreshPluginCheckboxes();
+  updateBadge();
+  updateConfig();
+}
+
+function renderCategories() {
+  const grid = document.getElementById('cat-grid');
+  const panels = document.getElementById('plugin-panels');
+  categories.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'cat-btn';
+    btn.dataset.cat = cat.key;
+    btn.innerHTML = `<strong>${cat.key}</strong><small>${cat.plugin_count} plugins</small>`;
+    btn.onclick = () => toggleCat(cat.key, btn);
+    grid.appendChild(btn);
+
+    const panel = document.createElement('div');
+    panel.className = 'plugin-list';
+    panel.id = `cat-${cat.key}`;
+    cat.plugins.forEach(p => {
+      const item = document.createElement('label');
+      item.className = 'plugin-item';
+      const sev = p.severity || 'medium';
+      item.innerHTML = `
+        <input type="checkbox" value="${p.id}" onchange="onPluginToggle(this)">
+        <div style="flex:1;min-width:0">
+          <div class="pid">${p.id}</div>
+          <div class="obj">${p.objective ? p.objective.slice(0,80) : ''}</div>
+        </div>
+        <span class="sev-badge sev-${sev}">${sev}</span>`;
+      panel.appendChild(item);
+    });
+    panels.appendChild(panel);
+  });
+}
+
+function toggleCat(key, btn) {
+  const panel = document.getElementById(`cat-${key}`);
+  const isOpen = panel.classList.contains('open');
+  document.querySelectorAll('.plugin-list.open').forEach(p => p.classList.remove('open'));
+  document.querySelectorAll('.cat-btn.active').forEach(b => b.classList.remove('active'));
+  if (!isOpen) { panel.classList.add('open'); btn.classList.add('active'); }
+}
+
+function onPluginToggle(cb) {
+  if (cb.checked) selectedPlugins.add(cb.value);
+  else selectedPlugins.delete(cb.value);
+
+  // Update category checkbox state
+  const catKey = cb.dataset.category;
+  if (catKey) {
+    const pluginIds = categoryPluginMap[catKey] || [];
+    const catCheckbox = document.querySelector(`.cat-select-all[data-cat-key="${catKey}"]`);
+    if (catCheckbox) {
+      const allChecked = pluginIds.every(pid => selectedPlugins.has(pid));
+      const someChecked = pluginIds.some(pid => selectedPlugins.has(pid));
+      catCheckbox.checked = allChecked;
+      catCheckbox.indeterminate = someChecked && !allChecked;
+    }
+  }
+
+  updateBadge(); updateConfig();
+}
+
+function refreshPluginCheckboxes() {
+  document.querySelectorAll('.plugin-item input[type=checkbox]').forEach(cb => {
+    cb.checked = selectedPlugins.has(cb.value);
+  });
+}
+
+function renderStrategies() {
+  const grid = document.getElementById('strat-grid');
+  strategies.forEach(s => {
+    const label = document.createElement('label');
+    label.className = 'strat-item';
+    label.innerHTML = `<input type="checkbox" value="${s.id}" onchange="updateBadge();updateConfig()"><span>${s.id}</span>`;
+    grid.appendChild(label);
+  });
+}
+
+function updateBadge() {
+  const pb = document.getElementById('plugin-badge');
+  const sb = document.getElementById('strat-badge');
+  const n = selectedPlugins.size + customPlugins.length;
+  pb.textContent = n;
+  pb.className = n > 0 ? 'section-badge' : 'section-badge empty';
+  const ns = document.querySelectorAll('#strat-grid input:checked').length;
+  sb.textContent = ns;
+  sb.className = ns > 0 ? 'section-badge' : 'section-badge empty';
+}
+
+function addCustomPlugin() {
+  const id  = document.getElementById('custom-id').value.trim();
+  const obj = document.getElementById('custom-obj').value.trim();
+  if (!id || !obj) return alert('ID and objective are required.');
+  const p = { id, objective: obj, severity: document.getElementById('custom-sev').value,
+              num_tests: +document.getElementById('custom-n').value };
+  customPlugins.push(p);
+  const el = document.getElementById('custom-plugins');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:4px;padding:5px 8px;font-size:12px';
+  row.innerHTML = `<span style="font-family:var(--mono);flex:1">${id}</span>
+    <span class="sev-badge sev-${p.severity}">${p.severity}</span>
+    <button style="background:none;border:none;color:var(--text-muted);cursor:pointer" onclick="removeCustom(${customPlugins.length-1},this.parentElement)">✕</button>`;
+  el.appendChild(row);
+  document.getElementById('custom-id').value = '';
+  document.getElementById('custom-obj').value = '';
+  updateBadge(); updateConfig();
+}
+
+function removeCustom(idx, el) {
+  customPlugins.splice(idx, 1);
+  el.remove();
+  updateBadge(); updateConfig();
+}
+
+// ── Config builder ────────────────────────────────────────────────────────────
+function buildConfig() {
+  const genBackend = document.getElementById('gen-backend').value;
+  const gradeBackend = document.getElementById('grade-backend').value;
+  const lang = document.getElementById('language').value;
+  const sev  = document.getElementById('severity').value;
+  const mc   = +document.getElementById('max-chars').value || 0;
+  const delay = +document.getElementById('delay').value || 0;
+  const gi   = document.getElementById('gen-instructions').value.trim();
+  const ex   = document.getElementById('examples').value.trim();
+  const globalInstructions = document.getElementById('global-instructions').value.trim();
+  const numTests = +document.getElementById('num-tests').value || 5;
+
+  const generation = { backend: genBackend, model: document.getElementById('gen-model').value || undefined };
+  const gk = document.getElementById('gen-key').value.trim();
+  if (gk) generation.api_key = gk;
+  const gu = document.getElementById('gen-url').value.trim();
+  if (gu) generation.base_url = gu;
+
+  const grading = { backend: gradeBackend, model: document.getElementById('grade-model').value || undefined };
+  const grk = document.getElementById('grade-key').value.trim();
+  if (grk) grading.api_key = grk;
+  const gru = document.getElementById('grade-url').value.trim();
+  if (gru) grading.url = gru;
+
+  const targetType = document.getElementById('target-type').value;
+  const target = {
+    purpose: document.getElementById('purpose').value.trim() || 'A helpful AI assistant.',
+    type: targetType,
+    name: document.getElementById('target-name').value.trim() || undefined,
+  };
+  const tm = document.getElementById('target-model').value.trim();
+  if (tm) target.model = tm;
+  const tk = document.getElementById('target-key').value.trim();
+  if (tk) target.api_key = tk;
+
+  // REST custom API (user-provided)
+  if (targetType === 'rest') {
+    const endpoint = document.getElementById('rest-endpoint').value.trim();
+    const modelName = document.getElementById('rest-model-name').value.trim();
+    const modelId = document.getElementById('rest-model-id').value.trim();
+    const payload = document.getElementById('rest-payload').value.trim();
+    const responseField = document.getElementById('rest-response-field').value.trim();
+    const headers = document.getElementById('rest-headers').value.trim();
+
+    if (endpoint) target.name = endpoint;
+    if (modelName) target.model = modelName;
+    if (modelId) target.model_id = modelId;
+    if (payload) {
+      try {
+        target.request = JSON.parse(payload);
+      } catch (e) {
+        console.warn('Invalid payload JSON:', e);
+      }
+    }
+    if (responseField) target.response_field = responseField;
+    if (headers) {
+      try {
+        target.headers = JSON.parse(headers);
+      } catch (e) {
+        console.warn('Invalid headers JSON:', e);
+      }
+    }
+  }
+
+  const selectedStrats = [...document.querySelectorAll('#strat-grid input:checked')].map(c => c.value);
+
+  const pluginList = [
+    ...[...selectedPlugins].map(id => {
+      const opts = pluginCustomizations[id] || {};
+
+      // Find which category this plugin belongs to
+      let pluginCategory = null;
+      for (const [catKey, pluginIds] of Object.entries(categoryPluginMap)) {
+        if (pluginIds.includes(id)) {
+          pluginCategory = catKey;
+          break;
+        }
+      }
+
+      const catOpts = pluginCategory ? (categoryCustomizations[pluginCategory] || {}) : {};
+      const entry = { id };
+
+      // Add category if found
+      if (pluginCategory) entry.category = pluginCategory;
+
+      // Apply settings with hierarchy: plugin-specific > category > global > default
+      if (opts.num_tests) entry.num_tests = opts.num_tests;
+      else if (catOpts.num_tests) entry.num_tests = catOpts.num_tests;
+
+      if (opts.severity) entry.severity = opts.severity;
+      else if (catOpts.severity) entry.severity = catOpts.severity;
+
+      if (opts.language) entry.language = opts.language;
+      else if (catOpts.language) entry.language = catOpts.language;
+
+      if (opts.max_chars) entry.max_chars = opts.max_chars;
+      else if (catOpts.max_chars) entry.max_chars = catOpts.max_chars;
+
+      if (opts.objective) entry.objective = opts.objective;
+
+      // instructions: plugin-specific > category-level
+      if (opts.instructions) entry.instructions = opts.instructions;
+      else if (catOpts.instructions) entry.instructions = catOpts.instructions;
+
+      // strategies: plugin-specific > category-level
+      if (opts.strategies && opts.strategies.length) entry.strategies = opts.strategies;
+      else if (catOpts.strategies && catOpts.strategies.length) entry.strategies = catOpts.strategies;
+
+      return entry;
+    }),
+    ...customPlugins.map(p => ({ id: p.id, objective: p.objective, severity: p.severity, num_tests: p.num_tests })),
+  ];
+
+  const cfg = {
+    generation,
+    grading,
+    target,
+    num_tests: numTests,
+    plugins: pluginList.length ? pluginList : ['prompt-injection'],
+    strategies: selectedStrats.length ? selectedStrats : undefined,
+  };
+  if (lang) cfg.language = lang;
+  if (sev)  cfg.severity = sev;
+  if (mc)   cfg.max_chars_per_message = mc;
+  if (delay) cfg.delay = delay;
+  if (gi)   cfg.generation_instructions = gi;
+  if (ex)   cfg.examples = ex;
+  if (globalInstructions) cfg.global_instructions = globalInstructions;
+
+  // strip undefined
+  return JSON.parse(JSON.stringify(cfg));
+}
+
+
+function updateConfig() {
+  const cfg = buildConfig();
+  document.getElementById('config-json').value = JSON.stringify(cfg, null, 2);
+}
+
+function copyConfig() {
+  navigator.clipboard.writeText(document.getElementById('config-json').value);
+}
+
+// ── Scan ──────────────────────────────────────────────────────────────────────
+async function startScan() {
+  const cfg = buildConfig();
+  document.getElementById('log').innerHTML = '';
+  setRunning(true);
+  switchTab('run', document.querySelector('.tab'));
+
+  try {
+    const res = await fetch(`${API}/api/scan/start`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({config: cfg}),
+    });
+    const {run_id} = await res.json();
+    currentRunId = run_id;
+    streamLogs(run_id);
+  } catch(e) {
+    appendLog(`ERROR: ${e.message}`, 'vuln');
+    setRunning(false);
+  }
+}
+
+let progressTimer = null;
+let startTime = null;
+
+function streamLogs(runId) {
+  startTime = Date.now();
+  document.getElementById('progress-section').style.display = 'flex';
+  
+  sseSource = new EventSource(`${API}/api/scan/${runId}/stream`);
+  sseSource.addEventListener('log', e => appendLog(e.data));
+  sseSource.addEventListener('progress', e => {
+    const prog = JSON.parse(e.data);
+    document.getElementById('progress-pct').textContent = prog.percent + '%';
+    document.getElementById('progress-bar').style.width = prog.percent + '%';
+    document.getElementById('progress-cases').textContent = `${prog.completed} / ${prog.total}`;
+    document.getElementById('progress-timer').textContent = prog.elapsed_seconds + 's';
+  });
+  sseSource.addEventListener('status', e => {
+    const done = e.data === 'done';
+    appendLog(done ? '✓ Scan complete.' : '✗ Scan ended with error.', done ? 'safe' : 'vuln');
+    setRunning(false);
+    sseSource.close();
+    if (done) loadResults(runId);
+  });
+  sseSource.addEventListener('error', e => {
+    appendLog(e.data || 'Connection error.', 'vuln');
+    setRunning(false);
+    sseSource.close();
+  });
+  sseSource.onerror = () => { setRunning(false); sseSource.close(); };
+}
+
+function appendLog(line, cls) {
+  const log = document.getElementById('log');
+  const span = document.createElement('span');
+  span.className = 'log-line' + (cls ? ` ${cls}` : '');
+  if (line.startsWith('===')) span.classList.add('hdr');
+  else if (line.includes('VULNERABLE')) span.classList.add('vuln');
+  else if (line.includes('RESISTED')) span.classList.add('safe');
+  span.textContent = line;
+  log.appendChild(span);
+  log.appendChild(document.createTextNode('\n'));
+  log.scrollTop = log.scrollHeight;
+}
+
+async function loadResults(runId) {
+  try {
+    const data = await fetch(`${API}/api/scan/${runId}/results`).then(r => r.json());
+    renderResults(data);
+    switchTab('results', document.querySelectorAll('.tab')[1]);
+  } catch {}
+}
+
+function stopScan() {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  setRunning(false);
+}
+
+function setRunning(on) {
+  document.getElementById('sidebar-run-btn').disabled = on;
+  document.getElementById('main-run-btn').disabled = on;
+  document.getElementById('stop-btn').style.display = on ? '' : 'none';
+  document.getElementById('run-status').textContent = on ? 'Scanning…' : 'Ready';
+}
+
+// ── Results renderer ──────────────────────────────────────────────────────────
+function renderResults(data) {
+  const s = data.summary || {};
+  const results = data.results || [];
+  const byPlugin = s.by_plugin || {};
+
+  const html = `
+    <div style="margin-bottom:16px">
+      <button class="copy-btn" onclick="downloadResultsJSON()">⬇ Download Results JSON</button>
+    </div>
+    
+    <div class="results-grid">
+      <div class="stat-card"><div class="num">${s.total||0}</div><div class="lbl">Total cases</div></div>
+      <div class="stat-card danger"><div class="num">${s.failed||0}</div><div class="lbl">Vulnerable</div></div>
+      <div class="stat-card safe"><div class="num">${s.passed||0}</div><div class="lbl">Resisted</div></div>
+      <div class="stat-card"><div class="num">${s.total ? Math.round(s.pass_rate*100) : 0}%</div><div class="lbl">Pass rate</div></div>
+    </div>
+    
+    <h3 style="font-size:13px;color:var(--text-muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.4px">Results by Plugin</h3>
+    <table class="plugin-table">
+      <thead><tr><th>Plugin</th><th>Severity</th><th>Vulnerable</th><th>Total</th><th>Bar</th></tr></thead>
+      <tbody>
+        ${Object.entries(byPlugin).map(([pid, c]) => {
+          const pct = c.total ? (c.vulnerable/c.total) : 0;
+          const sev = c.severity || 'medium';
+          return `<tr>
+            <td style="font-family:var(--mono);font-size:12px">${pid}</td>
+            <td><span class="sev-badge sev-${sev}">${sev}</span></td>
+            <td><span class="pill ${c.vulnerable>0?'pill-vuln':'pill-safe'}">${c.vulnerable}</span></td>
+            <td style="color:var(--text-muted)">${c.total}</td>
+            <td><div class="bar-wrap"><div class="bar-fill ${pct===0?'safe':''}" style="width:${Math.round(pct*100)}%"></div></div></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    
+    <h3 style="font-size:13px;color:var(--text-muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.4px">Input / Output</h3>
+    <table class="plugin-table" style="width:100%;table-layout:auto">
+      <thead><tr><th>Plugin</th><th>Input Prompt</th><th>Output Response</th><th>Verdict</th></tr></thead>
+      <tbody>
+        ${(results || []).slice(0, 100).map((r, i) => `<tr>
+          <td style="font-size:11px;font-family:var(--mono)">${r.plugin_id || '—'}</td>
+          <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;word-break:break-word">${(r.attack || '').slice(0, 100)}</td>
+          <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;word-break:break-word">${(r.response || '').slice(0, 100)}</td>
+          <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${results.length > 100 ? `<div style="color:var(--text-muted);font-size:11px;margin-top:8px">… and ${results.length - 100} more cases</div>` : ''}
+  `;
+  document.getElementById('results-content').innerHTML = html;
+  window.lastResultsData = data; // Save for download
+}
+
+function downloadResultsJSON() {
+  if (!window.lastResultsData) {
+    alert('No results to download');
+    return;
+  }
+  const json = JSON.stringify(window.lastResultsData, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `knox-rt-results-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function toggle(hdr) {
+  const body = hdr.nextElementSibling;
+  const ch   = hdr.querySelector('.chevron');
+  const open = body.classList.toggle('open');
+  ch.classList.toggle('open', open);
+}
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+  if (name === 'config') updateConfig();
+}
+
+function onGenBackendChange() {
+  const v = document.getElementById('gen-backend').value;
+  document.getElementById('gen-url-field').style.display = ['openai','custom'].includes(v) ? '' : 'none';
+  const models = {anthropic:'claude-opus-4-8',mistral:'mistral-large-latest',openai:'gpt-4o',custom:''};
+  document.getElementById('gen-model').placeholder = models[v] || '';
+}
+
+function onGradeBackendChange() {
+  const v = document.getElementById('grade-backend').value;
+  document.getElementById('grade-url-field').style.display = v === 'local' ? '' : 'none';
+  const models = {anthropic:'claude-opus-4-8',mistral:'mistral-large-latest',local:'red-team-evaluator'};
+  document.getElementById('grade-model').placeholder = models[v] || '';
+}
+
+function onTargetTypeChange() {
+  const v = document.getElementById("target-type").value;
+  // Show model field only for OpenAI
+  document.getElementById("target-model-field").style.display = v === "openai" ? "" : "none";
+  // Show REST advanced section only for REST
+  document.getElementById("rest-advanced").style.display = v === "rest" ? "" : "none";
+  // For REST, hide the "Model / Name" field since REST endpoint is in the advanced section
+  document.getElementById("target-name").parentElement.style.display = v === "rest" ? "none" : "";
+
+  const ph = {openai:"gpt-4o  or  http://localhost:11434",rest:"http://my-api:8080",function:"my_module#invoke"};
+  document.getElementById("target-name").placeholder = ph[v] || "";
+}
+
+function toggleTheme() {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+}
+
+// Live config update on any input change
+document.querySelectorAll('input,select,textarea').forEach(el => {
+  el.addEventListener('change', updateConfig);
+  el.addEventListener('input', () => { if (el.tagName === 'TEXTAREA') updateConfig(); });
+});
+
+init();
+updateConfig();
+onGenBackendChange();
+onGradeBackendChange();
+onTargetTypeChange();
+
+const REST_TEMPLATES = {
+  mistral: {
+    endpoint: "https://api.mistral.ai",
+    template: '{"model": "mistral-small-latest", "messages": [{"role": "user", "content": "$INPUT"}]}',
+    responseField: "choices.0.message.content",
+    headers: '{"Authorization": "Bearer $KEY"}'
+  },
+  openai: {
+    endpoint: "https://api.openai.com",
+    template: '{"model": "gpt-4o", "messages": [{"role": "user", "content": "$INPUT"}]}',
+    responseField: "choices.0.message.content",
+    headers: '{"Authorization": "Bearer $KEY"}'
+  },
+  ollama: {
+    endpoint: "http://localhost:11434",
+    template: '{"model": "llama3", "prompt": "$INPUT"}',
+    responseField: "response",
+    headers: "{}"
+  },
+  vllm: {
+    endpoint: "http://localhost:8000",
+    template: '{"model": "meta-llama/Llama-2-7b", "messages": [{"role": "user", "content": "$INPUT"}]}',
+    responseField: "choices.0.message.content",
+    headers: "{}"
+  },
+  custom: {
+    endpoint: "http://my-api:8080",
+    template: '{"prompt": "$INPUT", "max_tokens": 512}',
+    responseField: "output.text",
+    headers: "{}"
+  }
+};
+
+
+
+
+// ── Categories and per-category customization ───────────────────────────────
+let categoryCustomizations = {}; // {categoryKey: {instructions, ...}}
+let categoryPluginMap = {};     // {categoryKey: [plugin.id, ...]}
+
+async function loadCategories() {
+  try {
+    const categories = await fetch(`${API}/api/categories`).then(r => r.json());
+    renderCategories(categories);
+    // Populate strategies for each category after rendering
+    setTimeout(() => populateCategoryStrategies(), 0);
+  } catch (e) {
+    console.error('Failed to load categories:', e);
+  }
+}
+
+function renderCategories(categories) {
+  const container = document.getElementById('categories-container');
+  container.innerHTML = '';
+
+  categories.forEach(cat => {
+    // Track plugins in this category
+    categoryPluginMap[cat.key] = cat.plugins.map(p => p.id);
+
+    const card = document.createElement('div');
+    card.className = 'category-card';
+
+    const header = document.createElement('div');
+    header.className = 'category-header';
+    header.style.cursor = 'pointer';
+    header.style.display = 'flex';
+    header.style.alignItems = 'center';
+    header.style.gap = '8px';
+    header.style.padding = '8px';
+    header.style.borderRadius = 'var(--radius)';
+    header.style.userSelect = 'none';
+    header.onmouseenter = function() { this.style.background = 'var(--surface2)'; };
+    header.onmouseleave = function() { this.style.background = 'transparent'; };
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'cat-select-all';
+    checkbox.dataset.catKey = cat.key;
+    checkbox.onchange = (e) => {
+      e.stopPropagation();
+      selectAllInCategory(cat.key, checkbox.checked);
+    };
+    header.style.position = 'relative';
+
+    header.innerHTML = `
+      <span class="category-icon">📁</span>
+      <span class="category-title" style="flex:1">${cat.label}</span>
+      <span class="category-count">${cat.plugin_count}</span>
+      <span class="category-chevron">›</span>
+    `;
+    header.insertBefore(checkbox, header.firstChild.nextSibling);
+
+    header.onclick = (e) => {
+      if (e.target !== checkbox) toggleCategory(e);
+    };
+
+    // Category-level customization
+    const catCustomizeDiv = document.createElement('div');
+    catCustomizeDiv.style.padding = '8px';
+    catCustomizeDiv.style.background = 'var(--bg)';
+    catCustomizeDiv.style.borderBottom = '1px solid var(--border)';
+    catCustomizeDiv.style.display = 'none';
+    catCustomizeDiv.id = `cat-customize-${cat.key}`;
+    catCustomizeDiv.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div class="field" style="margin-bottom:0">
+          <label style="font-size:10px">Tests</label>
+          <input type="number" class="cat-opt-num_tests" min="1" placeholder="5" style="font-size:12px" data-cat-key="${cat.key}">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label style="font-size:10px">Severity</label>
+          <select class="cat-opt-severity" style="font-size:12px" data-cat-key="${cat.key}">
+            <option>—</option>
+            <option>low</option>
+            <option>medium</option>
+            <option>high</option>
+            <option>critical</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label style="font-size:10px">Language</label>
+          <select class="cat-opt-language" style="font-size:12px" data-cat-key="${cat.key}">
+            <option>—</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="zh">Chinese</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="ar">Arabic</option>
+            <option value="ru">Russian</option>
+            <option value="ja">Japanese</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label style="font-size:10px">Max chars</label>
+          <input type="number" class="cat-opt-max_chars" min="50" placeholder="none" style="font-size:12px" data-cat-key="${cat.key}">
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label style="font-size:10px">Strategies (for this category)</label>
+        <div class="cat-strat-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px" data-cat-key="${cat.key}" id="cat-strat-grid-${cat.key}"></div>
+      </div>
+      <div class="field" style="margin-top:8px;margin-bottom:0">
+        <label style="font-size:10px">Category Instructions (apply to all plugins)</label>
+        <textarea class="cat-opt-instructions" style="font-size:11px;min-height:40px" data-cat-key="${cat.key}" placeholder="Instructions for all plugins in ${cat.label}…"></textarea>
+      </div>
+    `;
+
+    const plugins = document.createElement('div');
+    plugins.className = 'category-plugins';
+    plugins.id = `cat-${cat.key}`;
+
+    cat.plugins.forEach(plugin => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'plugin-wrapper';
+
+      const row = document.createElement('label');
+      row.className = 'plugin-row';
+      row.innerHTML = `
+        <input type="checkbox" value="${plugin.id}" data-category="${cat.key}" onchange="onPluginToggle(this)">
+        <div class="plugin-info">
+          <div class="plugin-id">${plugin.id}</div>
+          <div class="plugin-obj">${(plugin.objective || '').slice(0, 60)}</div>
+        </div>
+        <span class="plugin-sev ${plugin.severity}">${plugin.severity}</span>
+        <button type="button" class="plugin-customize-btn" onclick="togglePluginCustomize(event, '${plugin.id}')">⚙</button>
+      `;
+      
+      const customize = document.createElement('div');
+      customize.className = 'plugin-customize';
+      customize.id = `customize-${plugin.id}`;
+      customize.innerHTML = `
+        <div style="padding:8px;background:var(--bg);border-top:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px">
+            Category: <strong>${cat.label}</strong>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div class="field" style="margin-bottom:0">
+              <label style="font-size:10px">Tests</label>
+              <input type="number" class="plugin-opt-num_tests" min="1" placeholder="5" style="font-size:12px">
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label style="font-size:10px">Severity</label>
+              <select class="plugin-opt-severity" style="font-size:12px">
+                <option>—</option>
+                <option>low</option>
+                <option>medium</option>
+                <option>high</option>
+                <option>critical</option>
+              </select>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label style="font-size:10px">Language</label>
+              <select class="plugin-opt-language" style="font-size:12px">
+                <option>—</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="zh">Chinese</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="ar">Arabic</option>
+              </select>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label style="font-size:10px">Max chars</label>
+              <input type="number" class="plugin-opt-max_chars" min="50" placeholder="none" style="font-size:12px">
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label style="font-size:10px">Custom Objective (override)</label>
+            <textarea class="plugin-opt-objective" style="font-size:11px;min-height:40px" placeholder="Leave empty to use plugin's default objective"></textarea>
+          </div>
+          <div class="field" style="margin-top:8px;margin-bottom:0">
+            <label style="font-size:10px">Strategies (for this plugin)</label>
+            <div class="plugin-strat-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px" data-plugin-id="${plugin.id}" id="plugin-strat-grid-${plugin.id}"></div>
+          </div>
+          <div class="field" style="margin-top:8px;margin-bottom:0">
+            <label style="font-size:10px">Plugin Instructions (optional)</label>
+            <textarea class="plugin-opt-instructions" style="font-size:11px;min-height:40px" placeholder="Special instructions for this specific plugin…"></textarea>
+          </div>
+        </div>
+      `;
+
+      wrapper.appendChild(row);
+      wrapper.appendChild(customize);
+      plugins.appendChild(wrapper);
+    });
+
+    card.appendChild(header);
+    card.appendChild(catCustomizeDiv);
+    card.appendChild(plugins);
+    container.appendChild(card);
+  });
+}
+
+function selectAllInCategory(catKey, checked) {
+  const pluginIds = categoryPluginMap[catKey] || [];
+  pluginIds.forEach(pluginId => {
+    const checkbox = document.querySelector(`input[type=checkbox][value="${pluginId}"]`);
+    if (checkbox) {
+      checkbox.checked = checked;
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+}
+
+function populateCategoryStrategies() {
+  strategies.forEach(s => {
+    document.querySelectorAll('.cat-strat-grid').forEach(grid => {
+      const catKey = grid.dataset.catKey;
+      const label = document.createElement('label');
+      label.style.display = 'flex';
+      label.style.alignItems = 'center';
+      label.style.gap = '6px';
+      label.style.fontSize = '11px';
+      label.style.padding = '4px 6px';
+      label.style.borderRadius = '3px';
+      label.style.cursor = 'pointer';
+      label.style.userSelect = 'none';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = s.id;
+      input.className = 'cat-opt-strategy';
+      input.dataset.catKey = catKey;
+      input.onchange = () => saveCategoryCustomization(catKey);
+      label.appendChild(input);
+      const span = document.createElement('span');
+      span.textContent = s.id;
+      label.appendChild(span);
+      grid.appendChild(label);
+    });
+  });
+}
+
+function populatePluginStrategies() {
+  strategies.forEach(s => {
+    document.querySelectorAll('.plugin-strat-grid').forEach(grid => {
+      const pluginId = grid.dataset.pluginId;
+      const label = document.createElement('label');
+      label.style.display = 'flex';
+      label.style.alignItems = 'center';
+      label.style.gap = '6px';
+      label.style.fontSize = '11px';
+      label.style.padding = '4px 6px';
+      label.style.borderRadius = '3px';
+      label.style.cursor = 'pointer';
+      label.style.userSelect = 'none';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = s.id;
+      input.className = 'plugin-opt-strategy';
+      input.dataset.pluginId = pluginId;
+      input.onchange = () => savePluginCustomization(pluginId);
+      label.appendChild(input);
+      const span = document.createElement('span');
+      span.textContent = s.id;
+      label.appendChild(span);
+      grid.appendChild(label);
+    });
+  });
+}
+
+function toggleCategory(e) {
+  const header = e.currentTarget;
+  const card = header.parentElement;
+  const plugins = card.querySelector('.category-plugins');
+  const catCustomize = card.querySelector('[id^="cat-customize-"]');
+  const chevron = header.querySelector('.category-chevron');
+
+  plugins.classList.toggle('open');
+  if (catCustomize) catCustomize.style.display = catCustomize.style.display === 'none' ? 'block' : 'none';
+  chevron.classList.toggle('open');
+}
+
+
+// ── Per-plugin customization ────────────────────────────────────────────────
+let pluginCustomizations = {}; // {pluginId: {num_tests, severity, language, max_chars}}
+
+function togglePluginCustomize(event, pluginId) {
+  event.stopPropagation();
+  const customize = document.getElementById(`customize-${pluginId}`);
+  customize.classList.toggle('open');
+
+  // Populate strategies if this is the first time opening
+  if (customize.classList.contains('open') && customize.querySelector('.plugin-strat-grid').children.length === 0) {
+    setTimeout(() => populatePluginStrategies(), 0);
+  }
+}
+
+function getPluginCustomization(pluginId) {
+  if (!pluginCustomizations[pluginId]) {
+    pluginCustomizations[pluginId] = {};
+  }
+  return pluginCustomizations[pluginId];
+}
+
+function savePluginCustomization(pluginId) {
+  const customize = document.getElementById(`customize-${pluginId}`);
+  const opts = getPluginCustomization(pluginId);
+
+  const numTests = customize.querySelector('.plugin-opt-num_tests').value;
+  const severity = customize.querySelector('.plugin-opt-severity').value;
+  const language = customize.querySelector('.plugin-opt-language').value;
+  const maxChars = customize.querySelector('.plugin-opt-max_chars').value;
+  const objective = customize.querySelector('.plugin-opt-objective').value;
+  const instructions = customize.querySelector('.plugin-opt-instructions').value;
+  const selectedStrategies = [...customize.querySelectorAll('.plugin-opt-strategy:checked')].map(cb => cb.value);
+
+  if (numTests) opts.num_tests = parseInt(numTests);
+  else delete opts.num_tests;
+
+  if (severity && severity !== '—') opts.severity = severity;
+  else delete opts.severity;
+
+  if (language && language !== '—') opts.language = language;
+  else delete opts.language;
+
+  if (maxChars) opts.max_chars = parseInt(maxChars);
+  else delete opts.max_chars;
+
+  if (objective) opts.objective = objective;
+  else delete opts.objective;
+
+  if (instructions) opts.instructions = instructions;
+  else delete opts.instructions;
+
+  if (selectedStrategies.length) opts.strategies = selectedStrategies;
+  else delete opts.strategies;
+
+  updateConfig();
+}
+
+// Auto-save on input change (including textarea)
+document.addEventListener('change', (e) => {
+  if (e.target.classList.contains('plugin-opt-num_tests') ||
+      e.target.classList.contains('plugin-opt-severity') ||
+      e.target.classList.contains('plugin-opt-language') ||
+      e.target.classList.contains('plugin-opt-max_chars') ||
+      e.target.classList.contains('plugin-opt-objective') ||
+      e.target.classList.contains('plugin-opt-instructions')) {
+    const customize = e.target.closest('.plugin-customize');
+    if (customize) {
+      const pluginId = customize.id.replace('customize-', '');
+      savePluginCustomization(pluginId);
+    }
+  }
+  // Category customizations (all fields)
+  if (e.target.classList.contains('cat-opt-num_tests') ||
+      e.target.classList.contains('cat-opt-severity') ||
+      e.target.classList.contains('cat-opt-language') ||
+      e.target.classList.contains('cat-opt-max_chars') ||
+      e.target.classList.contains('cat-opt-instructions')) {
+    const catKey = e.target.dataset.catKey;
+    saveCategoryCustomization(catKey);
+  }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.classList.contains('plugin-opt-objective') ||
+      e.target.classList.contains('plugin-opt-instructions')) {
+    const customize = e.target.closest('.plugin-customize');
+    if (customize) {
+      const pluginId = customize.id.replace('customize-', '');
+      savePluginCustomization(pluginId);
+    }
+  }
+  // Category instructions on input
+  if (e.target.classList.contains('cat-opt-instructions')) {
+    const catKey = e.target.dataset.catKey;
+    saveCategoryCustomization(catKey);
+  }
+});
+
+function saveCategoryCustomization(catKey) {
+  if (!categoryCustomizations[catKey]) {
+    categoryCustomizations[catKey] = {};
+  }
+  const catCustomize = document.getElementById(`cat-customize-${catKey}`);
+
+  const numTests = catCustomize.querySelector('.cat-opt-num_tests').value;
+  const severity = catCustomize.querySelector('.cat-opt-severity').value;
+  const language = catCustomize.querySelector('.cat-opt-language').value;
+  const maxChars = catCustomize.querySelector('.cat-opt-max_chars').value;
+  const instructions = catCustomize.querySelector('.cat-opt-instructions').value;
+  const selectedStrategies = [...catCustomize.querySelectorAll('.cat-opt-strategy:checked')].map(cb => cb.value);
+
+  if (numTests) categoryCustomizations[catKey].num_tests = parseInt(numTests);
+  else delete categoryCustomizations[catKey].num_tests;
+
+  if (severity && severity !== '—') categoryCustomizations[catKey].severity = severity;
+  else delete categoryCustomizations[catKey].severity;
+
+  if (language && language !== '—') categoryCustomizations[catKey].language = language;
+  else delete categoryCustomizations[catKey].language;
+
+  if (maxChars) categoryCustomizations[catKey].max_chars = parseInt(maxChars);
+  else delete categoryCustomizations[catKey].max_chars;
+
+  if (instructions) categoryCustomizations[catKey].instructions = instructions;
+  else delete categoryCustomizations[catKey].instructions;
+
+  if (selectedStrategies.length) categoryCustomizations[catKey].strategies = selectedStrategies;
+  else delete categoryCustomizations[catKey].strategies;
+
+  updateConfig();
+}
+
+
+// Call on init
+loadCategories();
+
+</script>
+</body>
+</html>
