@@ -971,8 +971,15 @@ function streamLogs(runId) {
     const done = e.data === 'done';
     appendLog(done ? '✓ Scan complete.' : '✗ Scan ended with error.', done ? 'safe' : 'vuln');
     setRunning(false);
+    if (done) {
+      sseSource.close();
+      loadResults(runId);
+    }
+    // Don't close if error - wait for error-detail event
+  });
+  sseSource.addEventListener('error-detail', e => {
+    appendLog('Error: ' + e.data, 'vuln');
     sseSource.close();
-    if (done) loadResults(runId);
   });
   sseSource.addEventListener('error', e => {
     appendLog(e.data || 'Connection error.', 'vuln');

@@ -48,7 +48,7 @@ def index():
 # run_id → {"status": "running"|"done"|"error", "output": [...], "results": {...}}
 _runs: dict[str, dict] = {}
 
-KNOX_RT_DIR = Path(__file__).parent.parent.parent / "redTeam"
+KNOX_RT_DIR = Path(__file__).parent.parent.parent
 
 
 # ── Plugin / strategy metadata ─────────────────────────────────────────────────
@@ -321,7 +321,7 @@ async def stream_scan(run_id: str):
             if run["status"] in ("done", "error"):
                 yield {"event": "status", "data": run["status"]}
                 if run["status"] == "error" and run.get("error"):
-                    yield {"event": "error", "data": run["error"]}
+                    yield {"event": "error-detail", "data": run["error"]}
                 break
             await asyncio.sleep(0.3)
 
