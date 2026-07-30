@@ -40,7 +40,13 @@ from detectors import (
     LocalJudge,
     MistralJudge,
 )
-from inference import CallableProvider, Provider, RestProvider
+from inference import (
+    AnthropicProvider,
+    CallableProvider,
+    MistralProvider,
+    Provider,
+    RestProvider,
+)
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 
@@ -89,9 +95,11 @@ def build_generator(spec: dict[str, Any]) -> Generator:
 def build_target(spec: dict[str, Any]) -> Provider:
     """Build a target provider from a config block.
 
-    ``type: rest``      any OpenAI-compatible REST endpoint (name = base URL).
-    ``type: openai``    OpenAI API (name = model name, e.g. gpt-4o).
-    ``type: function``  Python callable (name = module#fn).
+    ``type: rest``       any OpenAI-compatible REST endpoint (name = base URL).
+    ``type: openai``     OpenAI API (name = model name, e.g. gpt-4o).
+    ``type: anthropic``  Anthropic API (Claude models).
+    ``type: mistral``    Mistral API (Mistral models).
+    ``type: function``   Python callable (name = module#fn).
     """
     spec = dict(spec)
     spec.pop("purpose", None)
@@ -125,13 +133,19 @@ def build_target(spec: dict[str, Any]) -> Provider:
     if target_type == "openai":
         model = spec.pop("name", spec.pop("model", ""))
         return RestProvider(base_url="https://api.openai.com", model=model, **spec)
+    if target_type == "anthropic":
+        model = spec.pop("name", spec.pop("model", "claude-opus-4-8"))
+        return AnthropicProvider(model=model, **spec)
+    if target_type == "mistral":
+        model = spec.pop("name", spec.pop("model", "mistral-large-latest"))
+        return MistralProvider(model=model, **spec)
     if target_type == "function":
         fn_spec = spec.pop("name", None)
         if not fn_spec:
             raise ValueError("target type 'function' requires 'name' (module#fn)")
         return CallableProvider.from_module_spec(fn_spec)
     raise ValueError(
-        f"unknown target type {target_type!r} (expected rest | openai | function)"
+        f"unknown target type {target_type!r} (expected rest | openai | anthropic | mistral | function)"
     )
 
 

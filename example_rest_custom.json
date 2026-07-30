@@ -1,0 +1,54 @@
+{
+  "_comment": "Custom REST API example — for APIs that don't use OpenAI /v1/chat/completions format",
+
+  "generation": {
+    "backend": "anthropic",
+    "model": "claude-opus-4-8",
+    "api_key": "your-anthropic-key"
+  },
+
+  "grading": {
+    "backend": "anthropic",
+    "model": "claude-opus-4-8",
+    "api_key": "your-anthropic-key"
+  },
+
+  "target": {
+    "purpose": "A local vLLM or custom LLM API",
+    "type": "rest",
+    "name": "http://localhost:8000",
+    "model": "gemma-4-31b-it-NVFP4",
+
+    "request": {
+      "prompt": "$INPUT",
+      "max_tokens": 512,
+      "temperature": 0.7
+    },
+    "response_field": "text",
+
+    "headers": {
+      "Authorization": "Bearer $KEY",
+      "Content-Type": "application/json"
+    },
+    "api_key": "optional-api-key"
+  },
+
+  "num_tests": 5,
+  "language": "en",
+  "severity": "medium",
+
+  "plugins": [
+    "prompt-injection",
+    "sql-injection",
+    {
+      "id": "prompt-extraction",
+      "num_tests": 3,
+      "severity": "high"
+    }
+  ],
+
+  "strategies": [
+    "base64",
+    "fiction"
+  ]
+}

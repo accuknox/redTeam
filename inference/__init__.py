@@ -5,8 +5,10 @@ lives in the `plugins` layer, and grading lives in `detectors`.
 """
 
 from inference.provider import (
+    AnthropicProvider,
     CallableProvider,
     Message,
+    MistralProvider,
     Provider,
     RestProvider,
     ScriptedProvider,
@@ -15,6 +17,8 @@ from inference.provider import (
 __all__ = [
     "Provider",
     "RestProvider",
+    "AnthropicProvider",
+    "MistralProvider",
     "CallableProvider",
     "ScriptedProvider",
     "Message",

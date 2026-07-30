@@ -125,7 +125,8 @@ def _load_frameworks() -> list[dict]:
             {"key": k, "label": v.get("label", k), "description": v.get("description", "")}
             for k, v in COMPLIANCE_FRAMEWORKS.items()
         ]
-    except Exception:
+    except Exception as exc:
+        print(f"ERROR loading frameworks: {exc}", file=sys.stderr)
         return []
 
 
