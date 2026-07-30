@@ -131,6 +131,34 @@ FRAMEWORKS: dict[str, list[str]] = {
     ],
 }
 
+# Framework metadata for UI/backend
+COMPLIANCE_FRAMEWORKS = {
+    "owasp:llm": {
+        "label": "OWASP LLM Top 10",
+        "description": "OWASP LLM security risks (2023)"
+    },
+    "owasp:api": {
+        "label": "OWASP API Top 10",
+        "description": "OWASP API security risks (2023)"
+    },
+    "nist:ai:rmf": {
+        "label": "NIST AI Risk Management Framework",
+        "description": "NIST AI RMF (Govern, Map, Measure, Manage)"
+    },
+    "mitre:atlas": {
+        "label": "MITRE ATLAS",
+        "description": "MITRE ATT&CK for LLMs & Foundation Models"
+    },
+    "eu:ai-act": {
+        "label": "EU AI Act",
+        "description": "EU AI Act high-risk system requirements"
+    },
+    "iso:42001": {
+        "label": "ISO/IEC 42001",
+        "description": "ISO/IEC 42001 AI management system standard"
+    },
+}
+
 # Reverse map: plugin id → every framework that includes it.
 # Derived from FRAMEWORKS so a plugin automatically inherits all its framework tags.
 PLUGIN_FRAMEWORKS: dict[str, list[str]] = {}
@@ -450,6 +478,7 @@ __all__ = [
     "CATEGORIES",
     "CATEGORY_LABELS",
     "FRAMEWORKS",
+    "COMPLIANCE_FRAMEWORKS",
     "PLUGIN_FRAMEWORKS",
     "CONTROLS",
     "PLUGIN_CONTROLS",

@@ -358,6 +358,8 @@ button{cursor:pointer}
             <label>Type</label>
             <select id="target-type" onchange="onTargetTypeChange()">
               <option value="openai">OpenAI / Compatible</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="mistral">Mistral</option>
               <option value="rest">REST (custom)</option>
               <option value="function">Local function</option>
             </select>
@@ -407,10 +409,10 @@ button{cursor:pointer}
       </div>
     </div>
 
-    <!-- Scan Settings (consolidated) -->
+    <!-- Global Scan Options -->
     <div class="section">
       <div class="section-hdr" onclick="toggle(this)">
-        <span class="section-title">Scan Settings</span>
+        <span class="section-title">Global Scan Options</span>
         <span class="chevron">›</span>
       </div>
       <div class="section-body open">
@@ -428,6 +430,7 @@ button{cursor:pointer}
               <option value="high">High</option>
               <option value="medium">Medium</option>
               <option value="low">Low</option>
+              <option value="informational">Informational</option>
             </select>
           </div>
         </div>
@@ -465,6 +468,12 @@ button{cursor:pointer}
             <label>Global Instructions</label>
             <textarea id="global-instructions" rows="2" placeholder="Any constraints or instructions for all plugins…"></textarea>
           </div>
+        </div>
+
+        <!-- Strategies -->
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.4px">Attack Strategies</div>
+          <div class="strat-grid" id="strat-grid"></div>
         </div>
       </div>
     </div>
@@ -557,27 +566,31 @@ button{cursor:pointer}
             <div class="field"><label>Objective</label><textarea id="custom-obj" rows="2" placeholder="Convince the assistant to…"></textarea></div>
             <div class="row2">
               <div class="field"><label>Severity</label>
-                <select id="custom-sev"><option>medium</option><option>low</option><option>high</option><option>critical</option></select>
+                <select id="custom-sev"><option>medium</option><option>low</option><option>high</option><option>critical</option><option>informational</option></select>
               </div>
               <div class="field"><label>Num tests</label><input id="custom-n" type="number" value="5" min="1"></div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Language</label>
+                <select id="custom-lang" style="font-size:12px">
+                  <option>—</option>
+                </select>
+              </div>
+              <div class="field"><label>Max chars</label><input id="custom-max-chars" type="number" min="50" placeholder="none"></div>
+            </div>
+            <div class="field"><label>Frameworks (optional)</label>
+              <div id="custom-frameworks" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px"></div>
+            </div>
+            <div class="field"><label>Generation Instructions (optional)</label><textarea id="custom-instructions" rows="2" style="font-size:11px" placeholder="Special instructions for this plugin…"></textarea></div>
+            <div class="field"><label>Examples (optional)</label><textarea id="custom-examples" rows="2" style="font-size:11px" placeholder="Examples for this plugin…"></textarea></div>
+            <div class="field"><label>Strategies (optional)</label>
+              <div id="custom-strategies" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px"></div>
             </div>
             <button class="copy-btn" style="width:100%" onclick="addCustomPlugin()">Add Custom Plugin</button>
           </div>
         </details>
 
         <div id="custom-plugins" style="margin-top:12px;display:flex;flex-direction:column;gap:4px"></div>
-      </div>
-    </div>
-
-    <!-- Strategies -->
-    <div class="section">
-      <div class="section-hdr" onclick="toggle(this)">
-        <span class="section-title">Strategies</span>
-        <span class="section-badge empty" id="strat-badge">0</span>
-        <span class="chevron">›</span>
-      </div>
-      <div class="section-body">
-        <div class="strat-grid" id="strat-grid"></div>
       </div>
     </div>
 
@@ -644,11 +657,17 @@ button{cursor:pointer}
 
 <script>
 const API = 'http://localhost:8080';
-let plugins = [], categories = [], strategies = [], frameworks = [];
+let plugins = [], categories = [], strategies = [], frameworks = [], languages = [];
 let selectedPlugins = new Set();
+let selectedFrameworks = new Set();
 let customPlugins = [];
 let currentRunId = null;
 let sseSource = null;
+let categoryPluginMap = {};
+let categoryCustomizations = {};
+let pluginCustomizations = {};
+let frameworkCustomizations = {};
+let genBackend = 'anthropic', gradeBackend = 'anthropic';
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -660,15 +679,27 @@ async function init() {
       fetch(`${API}/api/frameworks`).then(r => r.json()),
       fetch(`${API}/api/languages`).then(r => r.json()),
     ]);
-    plugins = pl; categories = cat; strategies = st; frameworks = fw;
+    plugins = pl; categories = cat; strategies = st; frameworks = fw; languages = langs;
+    console.log('Frameworks loaded:', frameworks);
     renderLanguages(langs);
     renderFrameworks();
     renderStrategies();
+    populateCustomPluginForm();
     document.getElementById('api-dot').className = 'status-dot';
     document.getElementById('api-status').textContent = 'connected';
   } catch(e) {
     document.getElementById('api-status').textContent = 'offline — start backend';
   }
+}
+
+// Helper to escape framework keys for use in HTML IDs (URL encode)
+function escapeFrameworkKey(key) {
+  return encodeURIComponent(key);
+}
+
+// Helper to unescape framework keys back
+function unescapeFrameworkKey(escaped) {
+  return decodeURIComponent(escaped);
 }
 
 function renderLanguages(langs) {
@@ -682,30 +713,170 @@ function renderLanguages(langs) {
 
 function renderFrameworks() {
   const el = document.getElementById('fw-pills');
+  console.log('renderFrameworks: frameworks =', frameworks, 'el =', el);
+  const customContainer = document.getElementById('fw-customizations') || createFrameworkCustomizationContainer();
+
   frameworks.forEach(fw => {
+    console.log('Rendering framework:', fw);
     const btn = document.createElement('button');
     btn.className = 'fw-pill';
     btn.textContent = fw.key;
     btn.title = fw.label;
+    btn.dataset.fwKey = escapeFrameworkKey(fw.key);
+    btn.style.display = 'inline-flex';
+    btn.style.alignItems = 'center';
+    btn.style.gap = '4px';
+    btn.style.position = 'relative';
     btn.onclick = () => toggleFramework(fw.key, btn);
+
+    const customBtn = document.createElement('span');
+    customBtn.style.fontSize = '10px';
+    customBtn.style.padding = '1px 4px';
+    customBtn.style.marginLeft = '2px';
+    customBtn.style.background = 'var(--surface2)';
+    customBtn.style.border = '1px solid var(--border)';
+    customBtn.style.cursor = 'pointer';
+    customBtn.style.borderRadius = '2px';
+    customBtn.title = 'Customize this framework';
+    customBtn.textContent = '⚙';
+    customBtn.onclick = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleFrameworkCustomize(fw.key);
+    };
+
+    btn.appendChild(customBtn);
     el.appendChild(btn);
+
+    // Create customization panel
+    createFrameworkCustomizationPanel(fw.key, fw.label, customContainer);
   });
+}
+
+function createFrameworkCustomizationContainer() {
+  const existing = document.getElementById('fw-customizations');
+  if (existing) return existing;
+
+  const container = document.createElement('div');
+  container.id = 'fw-customizations';
+  container.style.marginTop = '8px';
+  container.style.marginBottom = '12px';
+
+  const fwPills = document.getElementById('fw-pills');
+  fwPills.parentElement.insertBefore(container, fwPills.nextElementSibling);
+
+  return container;
+}
+
+function createFrameworkCustomizationPanel(fwKey, fwLabel, container) {
+  const escapedKey = escapeFrameworkKey(fwKey);
+  const panelId = `fw-customize-${escapedKey}`;
+
+  if (document.getElementById(panelId)) return; // Already exists
+
+  const panel = document.createElement('div');
+  panel.id = panelId;
+  panel.style.display = 'none';
+  panel.style.background = 'var(--surface2)';
+  panel.style.padding = '12px';
+  panel.style.borderRadius = '6px';
+  panel.style.marginBottom = '8px';
+
+  panel.innerHTML = `
+    <div style="font-size:12px;font-weight:600;margin-bottom:8px">${fwLabel} Customization</div>
+    <div class="row2">
+      <div class="field">
+        <label style="font-size:10px">Language</label>
+        <select class="fw-opt-language" style="font-size:12px">
+          <option>—</option>
+        </select>
+      </div>
+      <div class="field">
+        <label style="font-size:10px">Severity</label>
+        <select class="fw-opt-severity" style="font-size:12px">
+          <option>—</option>
+          <option>low</option>
+          <option>medium</option>
+          <option>high</option>
+          <option>critical</option>
+          <option>informational</option>
+        </select>
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label style="font-size:10px">Num tests</label>
+        <input type="number" class="fw-opt-num_tests" min="1" placeholder="none" style="font-size:12px">
+      </div>
+      <div class="field">
+        <label style="font-size:10px">Max chars</label>
+        <input type="number" class="fw-opt-max_chars" min="50" placeholder="none" style="font-size:12px">
+      </div>
+    </div>
+    <div class="field">
+      <label style="font-size:10px">Generation Instructions</label>
+      <textarea class="fw-opt-instructions" style="font-size:11px;min-height:40px" placeholder="Special instructions for this framework…"></textarea>
+    </div>
+    <div class="field">
+      <label style="font-size:10px">Examples</label>
+      <textarea class="fw-opt-examples" style="font-size:11px;min-height:40px" placeholder="Examples for this framework…"></textarea>
+    </div>
+  `;
+
+  container.appendChild(panel);
+
+  // Populate language dropdown
+  languages.forEach(l => {
+    const option = document.createElement('option');
+    option.value = l.code;
+    option.textContent = l.name;
+    panel.querySelector('.fw-opt-language').appendChild(option);
+  });
+}
+
+function toggleFrameworkCustomize(fwKey) {
+  const escapedKey = escapeFrameworkKey(fwKey);
+  const panel = document.getElementById(`fw-customize-${escapedKey}`);
+  if (panel) {
+    const wasHidden = panel.style.display === 'none';
+    panel.style.display = wasHidden ? 'block' : 'none';
+
+    if (wasHidden) {
+      // Load saved customizations
+      const opts = frameworkCustomizations[fwKey] || {};
+      panel.querySelector('.fw-opt-language').value = opts.language || '—';
+      panel.querySelector('.fw-opt-severity').value = opts.severity || '—';
+      panel.querySelector('.fw-opt-num_tests').value = opts.num_tests || '';
+      panel.querySelector('.fw-opt-max_chars').value = opts.max_chars || '';
+      panel.querySelector('.fw-opt-instructions').value = opts.instructions || '';
+      panel.querySelector('.fw-opt-examples').value = opts.examples || '';
+    }
+  }
 }
 
 function toggleFramework(key, btn) {
   btn.classList.toggle('on');
+  const onFrameworks = Array.from(document.querySelectorAll('.fw-pill.on'))
+    .map(pill => unescapeFrameworkKey(pill.dataset.fwKey));
+
   if (btn.classList.contains('on')) {
-    // select all plugins belonging to this framework
+    // Add framework to selectedFrameworks
+    selectedFrameworks.add(key);
+    // Also add plugins for immediate UI feedback
     plugins.filter(p => p.frameworks && p.frameworks.includes(key))
            .forEach(p => selectedPlugins.add(p.id));
   } else {
-    plugins.filter(p => p.frameworks && p.frameworks.includes(key) &&
-      !plugins.some(other => other.id !== p.id && selectedPlugins.has(other.id) &&
-        other.frameworks && other.frameworks.some(f => {
-          const pill = document.querySelector(`.fw-pill.on`);
-          return pill && other.frameworks.includes(pill.textContent);
-        }))
-    ).forEach(p => selectedPlugins.delete(p.id));
+    // Remove framework from selectedFrameworks
+    selectedFrameworks.delete(key);
+    // deselect plugins that belong ONLY to this framework
+    plugins.filter(p => p.frameworks && p.frameworks.includes(key))
+           .forEach(p => {
+             // keep the plugin if it's in another active framework
+             const inOtherFramework = onFrameworks.some(fw => fw !== key && p.frameworks.includes(fw));
+             if (!inOtherFramework) {
+               selectedPlugins.delete(p.id);
+             }
+           });
   }
   refreshPluginCheckboxes();
   updateBadge();
@@ -734,7 +905,7 @@ function onPluginToggle(cb) {
 }
 
 function refreshPluginCheckboxes() {
-  document.querySelectorAll('.plugin-item input[type=checkbox]').forEach(cb => {
+  document.querySelectorAll('.plugin-row input[type=checkbox]').forEach(cb => {
     cb.checked = selectedPlugins.has(cb.value);
   });
 }
@@ -760,12 +931,85 @@ function updateBadge() {
   sb.className = ns > 0 ? 'section-badge' : 'section-badge empty';
 }
 
+function populateCustomPluginForm() {
+  // Populate language dropdown
+  const langSel = document.getElementById('custom-lang');
+  languages.forEach(l => {
+    const option = document.createElement('option');
+    option.value = l.code;
+    option.textContent = l.name;
+    langSel.appendChild(option);
+  });
+
+  // Populate frameworks checkboxes
+  const fwContainer = document.getElementById('custom-frameworks');
+  frameworks.forEach(fw => {
+    const label = document.createElement('label');
+    label.style.display = 'flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '4px';
+    label.style.cursor = 'pointer';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = fw.key;
+    const span = document.createElement('span');
+    span.textContent = fw.key;
+    label.appendChild(checkbox);
+    label.appendChild(span);
+    fwContainer.appendChild(label);
+  });
+
+
+  // Populate strategies checkboxes
+  const stratContainer = document.getElementById('custom-strategies');
+  strategies.forEach(s => {
+    const label = document.createElement('label');
+    label.style.display = 'flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '4px';
+    label.style.cursor = 'pointer';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = s.id;
+    const span = document.createElement('span');
+    span.textContent = s.id;
+    label.appendChild(checkbox);
+    label.appendChild(span);
+    stratContainer.appendChild(label);
+  });
+}
+
 function addCustomPlugin() {
   const id  = document.getElementById('custom-id').value.trim();
   const obj = document.getElementById('custom-obj').value.trim();
   if (!id || !obj) return alert('ID and objective are required.');
-  const p = { id, objective: obj, severity: document.getElementById('custom-sev').value,
-              num_tests: +document.getElementById('custom-n').value };
+
+  const p = {
+    id,
+    objective: obj,
+    severity: document.getElementById('custom-sev').value,
+    num_tests: +document.getElementById('custom-n').value
+  };
+
+  // Optional fields
+  const lang = document.getElementById('custom-lang').value;
+  if (lang && lang !== '—') p.language = lang;
+
+  const maxChars = +document.getElementById('custom-max-chars').value;
+  if (maxChars) p.max_chars = maxChars;
+
+  const frameworks = [...document.querySelectorAll('#custom-frameworks input:checked')].map(cb => cb.value);
+  if (frameworks.length) p.frameworks = frameworks;
+
+  const instructions = document.getElementById('custom-instructions').value.trim();
+  if (instructions) p.generation_instructions = instructions;
+
+  const examples = document.getElementById('custom-examples').value.trim();
+  if (examples) p.examples = examples;
+
+  const strategies = [...document.querySelectorAll('#custom-strategies input:checked')].map(cb => cb.value);
+  if (strategies.length) p.strategies = strategies;
+
   customPlugins.push(p);
   const el = document.getElementById('custom-plugins');
   const row = document.createElement('div');
@@ -774,8 +1018,16 @@ function addCustomPlugin() {
     <span class="sev-badge sev-${p.severity}">${p.severity}</span>
     <button style="background:none;border:none;color:var(--text-muted);cursor:pointer" onclick="removeCustom(${customPlugins.length-1},this.parentElement)">✕</button>`;
   el.appendChild(row);
+
+  // Clear form
   document.getElementById('custom-id').value = '';
   document.getElementById('custom-obj').value = '';
+  document.getElementById('custom-lang').value = '—';
+  document.getElementById('custom-max-chars').value = '';
+  document.getElementById('custom-instructions').value = '';
+  document.getElementById('custom-examples').value = '';
+  document.querySelectorAll('#custom-frameworks input, #custom-strategies input').forEach(cb => cb.checked = false);
+
   updateBadge(); updateConfig();
 }
 
@@ -798,17 +1050,32 @@ function buildConfig() {
   const globalInstructions = document.getElementById('global-instructions').value.trim();
   const numTests = +document.getElementById('num-tests').value || 5;
 
-  const generation = { backend: genBackend, model: document.getElementById('gen-model').value || undefined };
+  // Default models per backend
+  const defaultModels = {
+    anthropic: 'claude-haiku-4-5-20251001',
+    openai: 'gpt-4o-mini',
+    mistral: 'mistral-small-latest',
+    huggingface: 'meta-llama/Llama-2-7b-chat-hf',
+    custom: 'local-model'
+  };
+
+  const generation = {
+    backend: genBackend,
+    model: document.getElementById('gen-model').value.trim() || defaultModels[genBackend]
+  };
   const gk = document.getElementById('gen-key').value.trim();
   if (gk) generation.api_key = gk;
   const gu = document.getElementById('gen-url').value.trim();
   if (gu) generation.base_url = gu;
 
-  const grading = { backend: gradeBackend, model: document.getElementById('grade-model').value || undefined };
+  const grading = {
+    backend: gradeBackend,
+    model: document.getElementById('grade-model').value.trim() || defaultModels[gradeBackend]
+  };
   const grk = document.getElementById('grade-key').value.trim();
   if (grk) grading.api_key = grk;
   const gru = document.getElementById('grade-url').value.trim();
-  if (gru) grading.url = gru;
+  if (gru) grading.base_url = gru;
 
   const targetType = document.getElementById('target-type').value;
   const target = {
@@ -853,7 +1120,34 @@ function buildConfig() {
   const selectedStrats = [...document.querySelectorAll('#strat-grid input:checked')].map(c => c.value);
 
   const pluginList = [
-    ...[...selectedPlugins].map(id => {
+    // Framework entries from selectedFrameworks
+    ...[...selectedFrameworks].map(fwKey => {
+      const entry = { id: fwKey };
+      const opts = frameworkCustomizations[fwKey] || {};
+      if (opts.num_tests) entry.num_tests = opts.num_tests;
+      else if (numTests) entry.num_tests = numTests;
+      if (opts.severity && opts.severity !== '—') entry.severity = opts.severity;
+      if (opts.language && opts.language !== '—') entry.language = opts.language;
+      if (opts.max_chars) entry.max_chars = opts.max_chars;
+      if (opts.instructions) entry.generation_instructions = opts.instructions;
+      if (opts.examples) entry.examples = opts.examples;
+      if (opts.strategies && opts.strategies.length) entry.strategies = opts.strategies;
+      return entry;
+    }),
+
+    // Individual plugin entries (only manually selected, NOT from selected frameworks)
+    ...[...selectedPlugins]
+      .filter(id => {
+        // Exclude plugins that belong to selected frameworks
+        for (const fwKey of selectedFrameworks) {
+          const fwPlugins = plugins.filter(p => p.frameworks && p.frameworks.includes(fwKey));
+          if (fwPlugins.some(p => p.id === id)) {
+            return false;
+          }
+        }
+        return true;
+      })
+      .map(id => {
       const opts = pluginCustomizations[id] || {};
 
       // Find which category this plugin belongs to
@@ -868,12 +1162,10 @@ function buildConfig() {
       const catOpts = pluginCategory ? (categoryCustomizations[pluginCategory] || {}) : {};
       const entry = { id };
 
-      // Add category if found
-      if (pluginCategory) entry.category = pluginCategory;
-
       // Apply settings with hierarchy: plugin-specific > category > global > default
       if (opts.num_tests) entry.num_tests = opts.num_tests;
       else if (catOpts.num_tests) entry.num_tests = catOpts.num_tests;
+      else if (numTests) entry.num_tests = numTests;
 
       if (opts.severity) entry.severity = opts.severity;
       else if (catOpts.severity) entry.severity = catOpts.severity;
@@ -904,7 +1196,7 @@ function buildConfig() {
     grading,
     target,
     num_tests: numTests,
-    plugins: pluginList.length ? pluginList : ['prompt-injection'],
+    plugins: pluginList,
     strategies: selectedStrats.length ? selectedStrats : undefined,
   };
   if (lang) cfg.language = lang;
@@ -1035,8 +1327,8 @@ function renderResults(data) {
     
     <div class="results-grid">
       <div class="stat-card"><div class="num">${s.total||0}</div><div class="lbl">Total cases</div></div>
-      <div class="stat-card danger"><div class="num">${s.failed||0}</div><div class="lbl">Vulnerable</div></div>
-      <div class="stat-card safe"><div class="num">${s.passed||0}</div><div class="lbl">Resisted</div></div>
+      <div class="stat-card danger"><div class="num">${s.vulnerable||0}</div><div class="lbl">Vulnerable</div></div>
+      <div class="stat-card safe"><div class="num">${s.resisted||0}</div><div class="lbl">Resisted</div></div>
       <div class="stat-card"><div class="num">${s.total ? Math.round(s.pass_rate*100) : 0}%</div><div class="lbl">Pass rate</div></div>
     </div>
     
@@ -1188,9 +1480,6 @@ const REST_TEMPLATES = {
 
 
 // ── Categories and per-category customization ───────────────────────────────
-let categoryCustomizations = {}; // {categoryKey: {instructions, ...}}
-let categoryPluginMap = {};     // {categoryKey: [plugin.id, ...]}
-
 async function loadCategories() {
   try {
     console.log('Loading categories...');
@@ -1476,8 +1765,6 @@ function toggleCategory(e) {
 
 
 // ── Per-plugin customization ────────────────────────────────────────────────
-let pluginCustomizations = {}; // {pluginId: {num_tests, severity, language, max_chars}}
-
 function togglePluginCustomize(event, pluginId) {
   event.stopPropagation();
   const customize = document.getElementById(`customize-${pluginId}`);
@@ -1532,6 +1819,41 @@ function savePluginCustomization(pluginId) {
   updateConfig();
 }
 
+function saveFrameworkCustomization(fwKey) {
+  const escapedKey = escapeFrameworkKey(fwKey);
+  const customize = document.getElementById(`fw-customize-${escapedKey}`);
+  if (!customize) return;
+
+  const opts = frameworkCustomizations[fwKey] = frameworkCustomizations[fwKey] || {};
+
+  const numTests = customize.querySelector('.fw-opt-num_tests').value;
+  const severity = customize.querySelector('.fw-opt-severity').value;
+  const language = customize.querySelector('.fw-opt-language').value;
+  const maxChars = customize.querySelector('.fw-opt-max_chars').value;
+  const instructions = customize.querySelector('.fw-opt-instructions').value;
+  const examples = customize.querySelector('.fw-opt-examples').value;
+
+  if (numTests) opts.num_tests = parseInt(numTests);
+  else delete opts.num_tests;
+
+  if (severity && severity !== '—') opts.severity = severity;
+  else delete opts.severity;
+
+  if (language && language !== '—') opts.language = language;
+  else delete opts.language;
+
+  if (maxChars) opts.max_chars = parseInt(maxChars);
+  else delete opts.max_chars;
+
+  if (instructions) opts.instructions = instructions;
+  else delete opts.instructions;
+
+  if (examples) opts.examples = examples;
+  else delete opts.examples;
+
+  updateConfig();
+}
+
 // Auto-save on input change (including textarea)
 document.addEventListener('change', (e) => {
   if (e.target.classList.contains('plugin-opt-num_tests') ||
@@ -1546,6 +1868,21 @@ document.addEventListener('change', (e) => {
       savePluginCustomization(pluginId);
     }
   }
+
+  // Framework customizations
+  if (e.target.classList.contains('fw-opt-num_tests') ||
+      e.target.classList.contains('fw-opt-severity') ||
+      e.target.classList.contains('fw-opt-language') ||
+      e.target.classList.contains('fw-opt-max_chars') ||
+      e.target.classList.contains('fw-opt-instructions') ||
+      e.target.classList.contains('fw-opt-examples')) {
+    const customize = e.target.closest('[id^="fw-customize-"]');
+    if (customize) {
+      const escapedKey = customize.id.replace('fw-customize-', '');
+      const fwKey = unescapeFrameworkKey(escapedKey);
+      saveFrameworkCustomization(fwKey);
+    }
+  }
   // Category customizations (all fields)
   if (e.target.classList.contains('cat-opt-num_tests') ||
       e.target.classList.contains('cat-opt-severity') ||
@@ -1554,6 +1891,20 @@ document.addEventListener('change', (e) => {
       e.target.classList.contains('cat-opt-instructions')) {
     const catKey = e.target.dataset.catKey;
     saveCategoryCustomization(catKey);
+  }
+  // Framework customizations (all fields)
+  if (e.target.classList.contains('fw-opt-num_tests') ||
+      e.target.classList.contains('fw-opt-severity') ||
+      e.target.classList.contains('fw-opt-language') ||
+      e.target.classList.contains('fw-opt-max_chars') ||
+      e.target.classList.contains('fw-opt-instructions') ||
+      e.target.classList.contains('fw-opt-examples')) {
+    const customize = e.target.closest('[id^="fw-customize-"]');
+    if (customize) {
+      const escapedKey = customize.id.replace('fw-customize-', '');
+      const frameworkKey = unescapeFrameworkKey(escapedKey);
+      saveFrameworkCustomization(frameworkKey);
+    }
   }
 });
 
@@ -1570,6 +1921,15 @@ document.addEventListener('input', (e) => {
   if (e.target.classList.contains('cat-opt-instructions')) {
     const catKey = e.target.dataset.catKey;
     saveCategoryCustomization(catKey);
+  }
+  // Framework instructions on input
+  if (e.target.classList.contains('fw-opt-instructions') || e.target.classList.contains('fw-opt-examples')) {
+    const customize = e.target.closest('[id^="fw-customize-"]');
+    if (customize) {
+      const escapedKey = customize.id.replace('fw-customize-', '');
+      const frameworkKey = unescapeFrameworkKey(escapedKey);
+      saveFrameworkCustomization(frameworkKey);
+    }
   }
 });
 
@@ -1607,6 +1967,44 @@ function saveCategoryCustomization(catKey) {
   updateConfig();
 }
 
+function saveFrameworkCustomization(frameworkKey) {
+  if (!frameworkCustomizations[frameworkKey]) {
+    frameworkCustomizations[frameworkKey] = {};
+  }
+  const customize = document.getElementById(`fw-customize-${escapeFrameworkKey(frameworkKey)}`);
+  if (!customize) return;
+
+  const numTests = customize.querySelector('.fw-opt-num_tests')?.value;
+  const severity = customize.querySelector('.fw-opt-severity')?.value;
+  const language = customize.querySelector('.fw-opt-language')?.value;
+  const maxChars = customize.querySelector('.fw-opt-max_chars')?.value;
+  const instructions = customize.querySelector('.fw-opt-instructions')?.value;
+  const examples = customize.querySelector('.fw-opt-examples')?.value;
+  const selectedStrategies = [...customize.querySelectorAll('.fw-strat-grid input:checked')].map(cb => cb.value);
+
+  if (numTests) frameworkCustomizations[frameworkKey].num_tests = parseInt(numTests);
+  else delete frameworkCustomizations[frameworkKey].num_tests;
+
+  if (severity && severity !== '-') frameworkCustomizations[frameworkKey].severity = severity;
+  else delete frameworkCustomizations[frameworkKey].severity;
+
+  if (language && language !== '-') frameworkCustomizations[frameworkKey].language = language;
+  else delete frameworkCustomizations[frameworkKey].language;
+
+  if (maxChars) frameworkCustomizations[frameworkKey].max_chars = parseInt(maxChars);
+  else delete frameworkCustomizations[frameworkKey].max_chars;
+
+  if (instructions) frameworkCustomizations[frameworkKey].generation_instructions = instructions;
+  else delete frameworkCustomizations[frameworkKey].generation_instructions;
+
+  if (examples) frameworkCustomizations[frameworkKey].examples = examples;
+  else delete frameworkCustomizations[frameworkKey].examples;
+
+  if (selectedStrategies.length) frameworkCustomizations[frameworkKey].strategies = selectedStrategies;
+  else delete frameworkCustomizations[frameworkKey].strategies;
+
+  updateConfig();
+}
 
 // Call on init
 loadCategories();

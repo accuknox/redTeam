@@ -48,6 +48,263 @@ See [ui/README.md](ui/README.md) for detailed UI documentation and troubleshooti
 
 ---
 
+## 🎯 Web UI Guide
+
+The Web UI provides an interactive interface to configure and run scans without touching the command line. This guide explains every field and section.
+
+### Starting the UI
+
+```bash
+cd ui
+bash run.sh
+# Opens http://localhost:8080 automatically
+```
+
+### 1️⃣ **Target Configuration** (Left Sidebar)
+
+This section defines **what system you're testing**.
+
+| Field | What to enter | Examples | Notes |
+|-------|---------------|----------|-------|
+| **Purpose** | Description of the AI system's function | "A customer support chatbot that answers billing questions" | Sent to the generation model; helps tailor attacks. Required. |
+| **Type** | How to reach the target | `OpenAI / Compatible` \| `REST (custom)` \| `Local function` | See [Target Types](#target-types) below |
+| **Model / Name** | Identifier for the target model (OpenAI only) | `gpt-4o`, `gpt-3.5-turbo`, `claude-opus-4-8` | Only appears for OpenAI type. |
+| **API Key** | Authentication (if required) | `sk-...` (OpenAI), `sk-ant-...` (Anthropic) | Optional — leave blank if using default env var |
+
+#### Target Types Explained
+
+**OpenAI / Compatible** — Use this for OpenAI API or any server that speaks `/v1/chat/completions`:
+- Endpoint detected automatically from backend setting
+- Works with: OpenAI, Azure OpenAI, Together AI, vLLM, Ollama, LocalAI
+- Need to set: Model name, API key (if not using env var)
+- **Advanced REST options** appear below (endpoint, headers, etc.)
+
+**REST (Custom)** — Use this for any HTTP API with a custom request/response shape:
+- Endpoint: Full base URL (e.g., `https://api.example.com` or `http://localhost:8000`)
+- Model Name: Label for your model (e.g., `my-llm-v2`)
+- Request Payload: JSON template with `$INPUT` placeholder
+  - Example: `{"prompt": "$INPUT", "max_tokens": 512}`
+  - Example: `{"messages": [{"role": "user", "content": "$INPUT"}]}`
+- Response Field: Path to extract response text (e.g., `choices.0.message.content`, `output.text`)
+  - Leave empty to auto-detect
+- Custom Headers: JSON with any headers needed
+  - Example: `{"Authorization": "Bearer $KEY"}` (where `$KEY` is replaced with your API key)
+
+**Local Function** — Use this to test a Python function directly (no API call):
+- Useful for testing locally-deployed models
+- Name: Module and function (e.g., `mymodule#chat_fn`)
+
+### 2️⃣ **Scan Settings** (Left Sidebar)
+
+Global parameters that apply to all plugins unless overridden.
+
+| Field | What to enter | Range | Default | Notes |
+|-------|---------------|-------|---------|-------|
+| **Tests per Plugin** | How many attack prompts to generate per plugin | 1–50 | 5 | Total prompts = `tests × plugins × (1 + strategies)` |
+| **Severity** | Filter by risk level | `any`, `low`, `medium`, `high`, `critical` | any | Only runs plugins at this level or higher |
+| **Language** | Generate attacks in a specific language | English, Spanish, Chinese, French, German, etc. | English | Useful for testing multilingual defenses |
+| **Max Chars / Message** | Truncate generated attacks to max length | 50+ | (none) | Useful for testing length-based defenses |
+| **Delay Between Calls** | Wait time between API calls (ms) | 0+ | 0 | Prevents rate limiting; increases total time |
+| **Generation Instructions** | Hints for the attack model | Plain text | (empty) | Example: "Focus on social engineering and indirect requests" |
+| **Seed Examples** | Few-shot examples for the generator | `Prompt: ...` format (one per line) | (empty) | Guides the generation model toward certain attack styles |
+| **Global Instructions** | Constraints that apply to all plugins | Plain text | (empty) | Example: "Avoid explicit threats or violence" |
+
+### 3️⃣ **Generation Backend** (Left Sidebar)
+
+Configures **which model writes the attacks**.
+
+| Field | What to enter | Options | Example |
+|-------|---------------|---------|---------|
+| **Backend** | Provider for the generation model | `Anthropic`, `OpenAI`, `Mistral`, `Custom / vLLM` | Anthropic |
+| **Model Name** | Specific model to use | Varies by backend | `claude-opus-4-8` (Anthropic), `gpt-4o` (OpenAI), `mistral-large` (Mistral) |
+| **API Key** | Authentication (if required) | `sk-...` | Optional if using env var |
+| **Base URL** (Custom only) | Endpoint for self-hosted models | `http://localhost:8000/v1` | Only for `Custom / vLLM` |
+
+**Backend Recommendations:**
+- **Anthropic (Claude)**: Best reasoning and attack creativity — recommended for complex objectives
+- **OpenAI (GPT)**: Widely available, good balance of cost and quality
+- **Mistral**: Budget-friendly alternative
+- **Custom/vLLM**: Self-hosted models (Llama, Mixtral, etc.) — fast, no API costs
+
+### 4️⃣ **Grader / Evaluation Backend** (Left Sidebar)
+
+Configures **which model judges whether the target was vulnerable**.
+
+| Field | What to enter | Options | Example |
+|-------|---------------|---------|---------|
+| **Backend** | Provider for the evaluation model | `Anthropic`, `OpenAI`, `Mistral`, `Local (OpenAI-compatible)` | Anthropic |
+| **Model Name** | Specific model to use | Varies by backend | `claude-opus-4-8` (Anthropic), `gpt-4o` (OpenAI) |
+| **API Key** | Authentication | `sk-...` | Optional if using env var |
+| **Base URL** (Local only) | Endpoint for OpenAI-compatible grader | `http://localhost:8000/v1` | Only for `Local` |
+
+**Grader Recommendations:**
+- Use the same backend as generation (consistency) or a different one (validation)
+- Claude (Anthropic) graders are highly accurate — recommended if budget allows
+- Local graders (via `Local` backend) work with any `/v1/chat/completions` endpoint
+
+### 5️⃣ **Plugins** (Left Sidebar)
+
+Select **which vulnerabilities to test**.
+
+**Three ways to select:**
+
+1. **By Category**: Expand each category card to see plugins
+   - ✅ = plugin selected, ❌ = not selected
+   - Checkbox at top of category = select/deselect all in that category
+
+2. **By Framework**: Use preset buttons like `owasp:llm`, `nist:ai:rmf`
+   - Click a framework pill to instantly select all plugins in that standard
+   - Click again to deselect
+
+3. **Custom Plugins**: Add your own attacks
+   - **Plugin ID**: Unique identifier (e.g., `custom:my-attack`)
+   - **Objective**: What you're trying to make the model do
+   - **Severity**: `low`, `medium`, `high`, `critical`
+   - **Num tests**: How many variants to generate
+
+**Per-Plugin Customization** (click ⚙ gear icon on any plugin):
+- **Tests**: Override global test count for this plugin
+- **Severity**: Override severity level
+- **Language**: Override language for this plugin
+- **Max Chars**: Override character limit
+- **Custom Objective**: Replace the plugin's default objective
+- **Strategies**: Add attack transformations (base64, jailbreak, etc.)
+- **Instructions**: Plugin-specific hints to the generation model
+
+**Per-Category Customization** (click category header):
+- Same fields as per-plugin, but apply to all plugins in the category
+- Per-plugin settings override category settings
+
+### 6️⃣ **Strategies** (Left Sidebar)
+
+Select **attack transformation techniques** applied after plugin generation.
+
+Each selected strategy creates additional test cases. Total cases = `tests × plugins × (1 + strategies)`.
+
+**Text-based strategies** (no extra API calls):
+| Strategy | What it does | Best for |
+|----------|-------------|----------|
+| `base64` | Encodes the attack in Base64, asks to decode | Bypassing keyword filters |
+| `rot13` | ROT13-encodes the attack | Character-substitution filters |
+| `fiction` | Wraps attack in a creative writing prompt | Bypassing intent detection |
+| `citation` | Frames as academic research | Authority-based defenses |
+| `manyshot` | Prefixes with fake compliant Q&A pairs | Few-shot prompt injection |
+| `crescendo` | Frames as natural next step in conversation | Context-aware defenses |
+| `refusal-suppression` | Prepends "don't refuse" instructions | Refusal mechanisms |
+
+**LLM-based strategies** (incur extra API calls):
+| Strategy | What it does | Best for |
+|----------|-------------|----------|
+| `jailbreak` | Uses generator to rewrite attack persuasively | Sophisticated defenses |
+| `multilingual` | Translates to another language | Language-specific filters |
+
+### 7️⃣ **Run Scan** (Main Panel)
+
+Once configured, click the **Run Scan** button to execute:
+
+1. **Progress Section** appears showing:
+   - Progress bar (% complete)
+   - Cases completed (e.g., "45 / 100")
+   - Elapsed time
+
+2. **Live Log** shows real-time updates:
+   - Generation progress
+   - API calls to target
+   - Grading results
+   - Any errors
+
+### 8️⃣ **Results** (Tab View)
+
+After scan completes:
+
+**Summary Statistics**
+- Total cases tested
+- Vulnerable cases (target failed the test)
+- Resisted cases (target passed)
+- Pass rate (% of cases resisted)
+
+**Results by Plugin Table**
+- Plugin ID
+- Severity
+- Vulnerable count
+- Total count for this plugin
+- Visual bar showing vulnerability ratio
+
+**Input / Output Table**
+- Plugin ID (which attack was used)
+- Input Prompt (the actual attack)
+- Output Response (what the target returned)
+- Verdict (VULNERABLE or RESISTED)
+- Searchable, scrollable, showing first 100 cases
+
+**Download Results**
+- Export full results as JSON
+- Includes all metadata for analysis
+
+### 9️⃣ **Config JSON** (Tab View)
+
+Shows the exact configuration being used — useful for:
+- Saving configurations for later
+- Sharing setups with teammates
+- Understanding the structure
+- Debugging
+
+Copy the JSON and save it as `config.yaml` to run via CLI with the same settings.
+
+---
+
+## 🎯 Common Workflows
+
+### Workflow 1: Quick OWASP LLM Top 10 Test
+1. Set Purpose: `"An AI assistant providing financial advice"`
+2. Click `owasp:llm` framework pill (auto-selects 30 plugins)
+3. Set Generation backend: Claude
+4. Set Grader backend: Claude
+5. Click **Run Scan**
+6. Review results by vulnerability type
+
+### Workflow 2: Custom REST API (e.g., vLLM)
+1. **Target Type**: `REST (custom)`
+2. **Endpoint**: `http://localhost:8000`
+3. **Request Payload**: `{"model": "meta-llama/Llama-2-7b", "messages": [{"role": "user", "content": "$INPUT"}]}`
+4. **Response Field**: `choices.0.message.content`
+5. Select a few plugins (e.g., `prompt-injection`, `jailbreak`)
+6. Run scan
+
+### Workflow 3: Multilingual Testing
+1. Configure target as normal
+2. Select plugins you want to test
+3. Select `multilingual` strategy
+4. In Scan Settings, set **Language** to a specific language (e.g., Spanish)
+5. Run scan — attacks will be generated in Spanish AND translated via the multilingual strategy
+
+### Workflow 4: Severity-Focused Audit
+1. Configure target
+2. In Scan Settings, set **Severity**: `high` (only tests high/critical plugins)
+3. Select framework: `owasp:llm`
+4. Run scan to focus on the highest-risk vulnerabilities
+
+---
+
+## ⚠️ Important Notes
+
+**API Key Security:**
+- UI stores keys in browser memory only (not on disk)
+- Use env vars when possible: `export ANTHROPIC_API_KEY=...`
+- Don't commit keys to version control
+
+**Prompt Count & Cost:**
+- Total cases = `tests × plugins × (1 + strategies)`
+- Example: 5 tests × 10 plugins × (1 + 2 strategies) = **150 cases**
+- Each case = 1 generation call + 1 grading call
+- Example cost at $1/1K gen + $0.50/1K grade ≈ **$0.23 per scan**
+
+**Rate Limiting:**
+- If tests fail with rate limit errors, increase **Delay Between Calls**
+- Default is 0ms (no delay) — increase to 1000-2000ms for free tier APIs
+
+---
+
 ## Core idea
 
 Plugins don't store static attack strings. Each plugin holds a **meta-prompt** —
@@ -789,53 +1046,3 @@ The JSON output file wraps all records under `{"summary": {...}, "results": [...
 In a multi-target run the summary also includes a `"by_target"` breakdown — see
 [Multi-target testing](#multi-target-testing-ab-comparison) above.
 
----
-
-## Extending
-
-- **New target** — subclass `inference.Provider`, implement `_complete(messages) -> str`.
-  Or use `--target-type function` with any `f(prompt) -> str` callable.
-- **New generation backend** — subclass `plugins.Generator`, implement
-  `complete(prompt) -> str`, add a branch in `config.build_generator`.
-- **New evaluator backend** — subclass `detectors.Judge`, implement
-  `evaluate(prompt) -> str` (and optionally `evaluate_messages(msgs) -> str`
-  for gated/conversational evaluators), add a branch in `config.build_judge`.
-- **New strategy** — subclass `strategies.Strategy`, implement
-  `apply(prompt, *, purpose, generator) -> str`, register in `strategies._REGISTRY`.
-- **New plugin** — add a sub-plugin to `plugins/<cat>.py` (set `id` + `objective`)
-  and a matching sub-evaluator to `detectors/<cat>.py` (same `id` + `violation`);
-  both are auto-registered.
-- **New category** — add `plugins/<category>.py` (expose `CATEGORY` + `PLUGINS`)
-  and `detectors/<category>.py` (expose `CATEGORY` + `DETECTORS`), then add each
-  module to `_CATEGORY_MODULES` in its package `__init__.py`.
-
----
-
-## Building a standalone binary
-
-Produces a single `dist/knox-rt` executable that embeds Python and all dependencies.
-Anyone can run it without installing Python or any packages.
-
-**Prerequisites:** Python 3.11+ and `uv` installed.
-
-```bash
-git clone https://github.com/accuknox/redTeam.git
-cd redTeam
-python3 -m venv .venv && source .venv/bin/activate
-./build.sh
-```
-
-The binary is written to `dist/knox-rt`. Test it:
-
-```bash
-./dist/knox-rt --help
-./dist/knox-rt run config.json
-```
-
-**How it works:**
-
-| File | Purpose |
-|---|---|
-| `build_entry.py` | Thin entrypoint PyInstaller analyses to trace all imports |
-| `knox_rt.spec` | Declares what to bundle — plugins, detectors, strategies, backends |
-| `build.sh` | One-command build: installs deps into venv, runs PyInstaller |

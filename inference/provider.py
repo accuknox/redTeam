@@ -364,6 +364,86 @@ class RestProvider(Provider):
         )
 
 
+class AnthropicProvider(Provider):
+    """Target backed by the Anthropic API (Claude models).
+
+    Sends prompts to Claude via the Anthropic SDK with full message/system
+    prompt support. Handles streaming and non-streaming responses.
+    """
+
+    name = "anthropic"
+
+    def __init__(
+        self,
+        model: str = "claude-opus-4-8",
+        *,
+        api_key: str | None = None,
+        max_tokens: int = 4096,
+        **params: Any,
+    ) -> None:
+        super().__init__(model=model, max_tokens=max_tokens, params=params)
+        import os
+        import anthropic
+
+        self._client = anthropic.Anthropic(
+            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY")
+        )
+
+    def _complete(self, messages: list[Message]) -> str:
+        # Extract system message if present
+        system = next((m["content"] for m in messages if m["role"] == "system"), None)
+        # Filter out system messages from the messages list
+        non_system_messages = [m for m in messages if m["role"] != "system"]
+
+        response = self._client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system,
+            messages=non_system_messages,
+            **self.params,
+        )
+        return "".join(b.text for b in response.content if b.type == "text")
+
+
+class MistralProvider(Provider):
+    """Target backed by the Mistral API.
+
+    Sends prompts to Mistral models via the Mistral SDK with full message/system
+    prompt support.
+    """
+
+    name = "mistral"
+
+    def __init__(
+        self,
+        model: str = "mistral-large-latest",
+        *,
+        api_key: str | None = None,
+        max_tokens: int = 4096,
+        **params: Any,
+    ) -> None:
+        super().__init__(model=model, max_tokens=max_tokens, params=params)
+        import os
+        from mistralai import Mistral
+
+        self._client = Mistral(api_key=api_key or os.environ.get("MISTRAL_API_KEY"))
+
+    def _complete(self, messages: list[Message]) -> str:
+        # Extract system message if present
+        system = next((m["content"] for m in messages if m["role"] == "system"), None)
+        # Filter out system messages from the messages list
+        non_system_messages = [m for m in messages if m["role"] != "system"]
+
+        response = self._client.chat.complete(
+            model=self.model,
+            messages=non_system_messages,
+            system=system,
+            max_tokens=self.max_tokens,
+            **self.params,
+        )
+        return response.choices[0].message.content or ""
+
+
 class CallableProvider(Provider):
     """Target backed by a Python callable ``f(prompt: str) -> str``.
 
