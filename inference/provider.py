@@ -424,20 +424,14 @@ class MistralProvider(Provider):
     ) -> None:
         super().__init__(model=model, max_tokens=max_tokens, params=params)
         import os
-        from mistralai import Mistral
+        from mistralai.client import Mistral
 
         self._client = Mistral(api_key=api_key or os.environ.get("MISTRAL_API_KEY"))
 
     def _complete(self, messages: list[Message]) -> str:
-        # Extract system message if present
-        system = next((m["content"] for m in messages if m["role"] == "system"), None)
-        # Filter out system messages from the messages list
-        non_system_messages = [m for m in messages if m["role"] != "system"]
-
         response = self._client.chat.complete(
             model=self.model,
-            messages=non_system_messages,
-            system=system,
+            messages=messages,
             max_tokens=self.max_tokens,
             **self.params,
         )

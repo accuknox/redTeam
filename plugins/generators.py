@@ -171,6 +171,9 @@ class OpenAIGenerator(Generator):
         self.temperature = temperature
         self.system = system
         self.params = params
+        # Handle base_url: ensure /v1 suffix for OpenAI-compatible endpoints
+        if base_url and not base_url.endswith("/v1"):
+            base_url = base_url.rstrip("/") + "/v1"
         self._client = client or OpenAI(
             api_key=api_key or os.environ.get("OPENAI_API_KEY", "none"),
             base_url=base_url or None,
