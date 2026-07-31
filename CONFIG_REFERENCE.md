@@ -43,9 +43,10 @@ generation:
 
 | Parameter | Type | Required | Default | Description | Example |
 |---|---|---|---|---|---|
-| `backend` | string | **required** | `anthropic` | Generation backend. | `anthropic` \| `mistral` \| `huggingface` |
-| `model` | string | **required** | — | Model id for the chosen backend. | `claude-opus-4-8`, `ministral-8b-2410`, `meta-llama/Llama-3.1-8B-Instruct` |
-| `api_key` | string | no | — | API key / bearer token. | `sk-ant-...` |
+| `backend` | string | **required** | `anthropic` | Generation backend. | `anthropic` \| `openai` \| `mistral` \| `huggingface` \| `custom` |
+| `model` | string | **required** | — | Model id for the chosen backend. | `claude-opus-4-8`, `gpt-4o`, `mistral-large-latest`, `meta-llama/Llama-3.1-8B-Instruct` |
+| `api_key` | string | no | — | API key / bearer token. | `sk-ant-...`, `sk-proj-...` |
+| `base_url` | string | no | — | **`custom` only.** Base URL for OpenAI-compatible endpoint (vLLM, Ollama, LM Studio). | `http://localhost:8000/v1` |
 | `temperature` | float | no | `0.7` | Sampling temperature. Higher = more varied attacks. | `0.9` |
 | `effort` | string | no | — | **Anthropic only.** Thinking depth. | `low` \| `medium` \| `high` |
 | `url` | string | no | — | **`huggingface` only.** Custom inference endpoint. | `http://localhost:8000` |
@@ -66,14 +67,24 @@ grading:
 
 | Parameter | Type | Required | Default | Description | Example |
 |---|---|---|---|---|---|
-| `backend` | string | **required** | `anthropic` | Judge backend. | `anthropic` \| `mistral` \| `huggingface` \| `local` |
-| `model` | string | **required** | — | Model id. | `claude-opus-4-8` |
-| `api_key` | string | no | — | API key. | `sk-ant-...` |
+| `backend` | string | **required** | `anthropic` | Judge backend. | `anthropic` \| `openai` \| `mistral` \| `huggingface` \| `custom` \| `local` |
+| `model` | string | **required** | — | Model id. | `claude-opus-4-8`, `gpt-4o-mini`, `mistral-small-latest` |
+| `api_key` | string | no | — | API key. | `sk-ant-...`, `sk-proj-...` |
+| `base_url` | string | no | — | **`custom` or `local` only.** OpenAI-compatible judge endpoint. | `http://localhost:8000/v1`, `http://my-evaluator:47923` |
 | `temperature` | float | no | `0.0` | Keep at `0` for deterministic grading. | `0.0` |
 | `effort` | string | no | — | **Anthropic only.** | `low` \| `medium` \| `high` |
-| `url` | string | no | — | **`local` only.** OpenAI-compatible judge endpoint. | `http://my-evaluator:47923` |
 
-**`local` backend** — for a self-hosted evaluator model (e.g. AccuKnox gated evaluator):
+**`custom` backend** — for a self-hosted OpenAI-compatible evaluator (vLLM, Ollama, LM Studio):
+
+```yaml
+grading:
+  backend: custom
+  base_url: http://localhost:8000/v1
+  model: your-model-name
+  api_key: your-key-here   # omit if no auth required
+```
+
+**`local` backend** — legacy alias for custom (same behavior):
 
 ```yaml
 grading:
@@ -101,35 +112,51 @@ purpose: "A customer-support assistant for an online bookstore."
 
 Use `target:` when testing **one** model. Switch to `targets:` (plural) to compare multiple.
 
-### `type: openai` — OpenAI API or any OpenAI-compatible server
+### `type: openai` — OpenAI API only
 
 ```yaml
-# Using OpenAI directly:
 target:
   type: openai
   name: gpt-4o
-  api_key: sk-...
-
-# Using a self-hosted server (Ollama, vLLM, LM Studio):
-target:
-  type: openai
-  name: http://localhost:11434   # full base URL
-  model: llama3                  # model name sent in the request body
-  api_key: ""                    # omit if no auth required
+  api_key: sk-proj-...
 ```
 
 | Parameter | Type | Required | Description | Example |
 |---|---|---|---|---|
 | `type` | string | **required** | Target type. | `openai` |
-| `name` | string | **required** | Model name → uses `api.openai.com`. Or a full base URL → sends to that host instead. | `gpt-4o` \| `http://localhost:11434` |
-| `model` | string | no | Model name sent in the request body. Only needed when `name` is a URL. | `llama3` |
-| `api_key` | string | no | Bearer token. Sent as `Authorization: Bearer <key>`. | `sk-...` |
+| `name` | string | **required** | OpenAI model name. | `gpt-4o`, `gpt-4-turbo`, `gpt-4o-mini` |
+| `api_key` | string | no | OpenAI API key. | `sk-proj-...` |
 | `system` | string | no | System prompt prepended to every request to this target. | `"You are a helpful assistant."` |
 | `purpose` | string | no | Legacy location — prefer the top-level `purpose` key. | `"A support bot."` |
 
 ---
 
+### `type: custom` — OpenAI-compatible self-hosted servers
+
+For vLLM, Ollama, LM Studio, or any OpenAI-compatible endpoint.
+
+```yaml
+target:
+  type: custom
+  name: http://localhost:11434      # full base URL
+  model: llama2                      # model name sent in the request body
+  api_key: ""                        # omit if no auth required
+```
+
+| Parameter | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `type` | string | **required** | Target type. | `custom` |
+| `name` | string | **required** | Base URL of the OpenAI-compatible endpoint. | `http://localhost:11434`, `http://localhost:8000/v1` |
+| `model` | string | no | Model name sent in the request body. | `llama2`, `mistral-7b`, `gpt-4` |
+| `api_key` | string | no | Bearer token (if required). | `Bearer sk-...` |
+| `system` | string | no | System prompt prepended to every request. | `"You are a helpful assistant."` |
+| `purpose` | string | no | Legacy location — prefer the top-level `purpose` key. | `"A support bot."` |
+
+---
+
 ### `type: rest` — any REST endpoint with a custom request/response shape
+
+For **non-OpenAI-compatible** APIs. If your endpoint IS OpenAI-compatible, use `type: custom` instead.
 
 ```yaml
 # Option A: use a config file (any API shape):
@@ -137,10 +164,12 @@ target:
   type: rest
   config: my_api.yaml    # see REST Config File section below
 
-# Option B: bare URL (if the endpoint is already OpenAI-compatible):
+# Option B: bare URL with full endpoint path (non-standard API):
 target:
   type: rest
-  name: http://my-api:8080/v1/chat/completions
+  name: http://my-api:8080/chat
+  request: '{"input": "$INPUT", "model": "my-model"}'
+  response_field: "output.text"
   api_key: my-secret
 ```
 

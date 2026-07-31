@@ -357,20 +357,25 @@ button{cursor:pointer}
           <div class="field">
             <label>Type</label>
             <select id="target-type" onchange="onTargetTypeChange()">
-              <option value="openai">OpenAI / Compatible</option>
+              <option value="openai">OpenAI</option>
+              <option value="custom">Custom (OpenAI-compatible)</option>
               <option value="anthropic">Anthropic (Claude)</option>
               <option value="mistral">Mistral</option>
-              <option value="rest">REST (custom)</option>
+              <option value="rest">REST (advanced)</option>
               <option value="function">Local function</option>
             </select>
           </div>
-          <div class="field">
-            <label>Model / Name</label>
+          <div class="field" id="target-name-field">
+            <label>Model Name</label>
             <input id="target-name" type="text" placeholder="gpt-4o">
           </div>
+          <div class="field" id="target-base-url-field" style="display:none">
+            <label>Base URL</label>
+            <input id="target-base-url" type="text" placeholder="http://localhost:8000/v1">
+          </div>
         </div>
-        <div class="field" id="target-model-field">
-          <label>Model (for vLLM / Ollama)</label>
+        <div class="field" id="target-model-field" style="display:none">
+          <label>Model Name</label>
           <input id="target-model" type="text" placeholder="llama3">
         </div>
         <div class="field">
@@ -491,7 +496,7 @@ button{cursor:pointer}
             <option value="anthropic">Anthropic</option>
             <option value="openai">OpenAI</option>
             <option value="mistral">Mistral</option>
-            <option value="custom">Custom / vLLM</option>
+            <option value="custom">Custom (OpenAI-compatible)</option>
           </select>
         </div>
         <div class="field">
@@ -522,7 +527,7 @@ button{cursor:pointer}
             <option value="anthropic">Anthropic</option>
             <option value="openai">OpenAI</option>
             <option value="mistral">Mistral</option>
-            <option value="local">Local (OpenAI-compatible)</option>
+            <option value="custom">Custom (OpenAI-compatible)</option>
           </select>
         </div>
         <div class="field">
@@ -595,6 +600,7 @@ button{cursor:pointer}
     </div>
 
     <div class="sidebar-footer">
+      <button class="sidebar-run-btn" style="background:var(--surface1);color:var(--text-secondary);margin-bottom:8px;border:1px solid var(--border)" onclick="updateConfig()">🔄 Update Config</button>
       <button class="sidebar-run-btn" id="sidebar-run-btn" onclick="startScan()">Run Scan</button>
     </div>
   </aside>
@@ -868,6 +874,12 @@ function toggleFramework(key, btn) {
   } else {
     // Remove framework from selectedFrameworks
     selectedFrameworks.delete(key);
+    // Clear customizations for this framework
+    delete frameworkCustomizations[key];
+    // Hide customization panel
+    const escapedKey = escapeFrameworkKey(key);
+    const panel = document.getElementById(`fw-customize-${escapedKey}`);
+    if (panel) panel.style.display = 'none';
     // deselect plugins that belong ONLY to this framework
     plugins.filter(p => p.frameworks && p.frameworks.includes(key))
            .forEach(p => {
@@ -1066,7 +1078,7 @@ function buildConfig() {
   const gk = document.getElementById('gen-key').value.trim();
   if (gk) generation.api_key = gk;
   const gu = document.getElementById('gen-url').value.trim();
-  if (gu) generation.base_url = gu;
+  if (gu && genBackend === 'custom') generation.base_url = gu;
 
   const grading = {
     backend: gradeBackend,
@@ -1075,16 +1087,26 @@ function buildConfig() {
   const grk = document.getElementById('grade-key').value.trim();
   if (grk) grading.api_key = grk;
   const gru = document.getElementById('grade-url').value.trim();
-  if (gru) grading.base_url = gru;
+  if (gru && (gradeBackend === 'custom' || gradeBackend === 'local')) grading.base_url = gru;
 
   const targetType = document.getElementById('target-type').value;
   const target = {
     purpose: document.getElementById('purpose').value.trim() || 'A helpful AI assistant.',
     type: targetType,
-    name: document.getElementById('target-name').value.trim() || undefined,
   };
-  const tm = document.getElementById('target-model').value.trim();
-  if (tm) target.model = tm;
+
+  if (targetType === 'openai') {
+    const tn = document.getElementById('target-name').value.trim();
+    if (tn) target.name = tn;
+  } else if (targetType === 'custom') {
+    const tu = document.getElementById('target-base-url').value.trim();
+    if (tu) target.base_url = tu;
+    const tm = document.getElementById('target-model').value.trim();
+    if (tm) target.model = tm;
+  } else {
+    const tn = document.getElementById('target-name').value.trim();
+    if (tn) target.name = tn;
+  }
   const tk = document.getElementById('target-key').value.trim();
   if (tk) target.api_key = tk;
 
@@ -1356,17 +1378,42 @@ function renderResults(data) {
       <tbody>
         ${(results || []).slice(0, 100).map((r, i) => `<tr>
           <td style="font-size:11px;font-family:var(--mono)">${r.plugin_id || '—'}</td>
-          <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;word-break:break-word">${(r.attack || '').slice(0, 100)}</td>
-          <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;word-break:break-word">${(r.response || '').slice(0, 100)}</td>
+          <td style="font-size:11px;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showFullContent('Input', '${(r.attack || '').replace(/'/g, "\\'")}'" title="Click to see full content">${(r.attack || '').slice(0, 80)}${(r.attack || '').length > 80 ? '…' : ''}</td>
+          <td style="font-size:11px;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showFullContent('Output', '${(r.response || '').replace(/'/g, "\\'")}'" title="Click to see full content">${(r.response || '').slice(0, 80)}${(r.response || '').length > 80 ? '…' : ''}</td>
           <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
         </tr>`).join('')}
       </tbody>
     </table>
+
+    <!-- Modal for full content -->
+    <div id="content-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;padding:20px;overflow:auto">
+      <div style="background:var(--surface1);border-radius:8px;padding:16px;max-width:90%;margin:20px auto;max-height:80vh;overflow:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3 id="modal-title" style="margin:0;font-size:14px">Content</h3>
+          <button onclick="document.getElementById('content-modal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <pre id="modal-content" style="margin:0;font-size:12px;font-family:var(--mono);white-space:pre-wrap;word-wrap:break-word;color:var(--text-secondary)"></pre>
+      </div>
+    </div>
     ${results.length > 100 ? `<div style="color:var(--text-muted);font-size:11px;margin-top:8px">… and ${results.length - 100} more cases</div>` : ''}
   `;
   document.getElementById('results-content').innerHTML = html;
   window.lastResultsData = data; // Save for download
 }
+
+function showFullContent(title, content) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-content').textContent = content;
+  document.getElementById('content-modal').style.display = 'block';
+}
+
+// Close modal on background click
+document.addEventListener('click', function(e) {
+  const modal = document.getElementById('content-modal');
+  if (modal && e.target === modal) {
+    modal.style.display = 'none';
+  }
+});
 
 function downloadResultsJSON() {
   if (!window.lastResultsData) {
@@ -1401,28 +1448,39 @@ function switchTab(name, btn) {
 
 function onGenBackendChange() {
   const v = document.getElementById('gen-backend').value;
-  document.getElementById('gen-url-field').style.display = ['openai','custom'].includes(v) ? '' : 'none';
+  document.getElementById('gen-url-field').style.display = v === 'custom' ? '' : 'none';
   const models = {anthropic:'claude-opus-4-8',mistral:'mistral-large-latest',openai:'gpt-4o',custom:''};
   document.getElementById('gen-model').placeholder = models[v] || '';
 }
 
 function onGradeBackendChange() {
   const v = document.getElementById('grade-backend').value;
-  document.getElementById('grade-url-field').style.display = v === 'local' ? '' : 'none';
-  const models = {anthropic:'claude-opus-4-8',mistral:'mistral-large-latest',local:'red-team-evaluator'};
+  document.getElementById('grade-url-field').style.display = (v === 'custom' || v === 'local') ? '' : 'none';
+  const models = {anthropic:'claude-opus-4-8',mistral:'mistral-large-latest',openai:'gpt-4o-mini',custom:'your-model',local:'red-team-evaluator'};
   document.getElementById('grade-model').placeholder = models[v] || '';
 }
 
 function onTargetTypeChange() {
   const v = document.getElementById("target-type").value;
-  // Show model field only for OpenAI
-  document.getElementById("target-model-field").style.display = v === "openai" ? "" : "none";
-  // Show REST advanced section only for REST
-  document.getElementById("rest-advanced").style.display = v === "rest" ? "" : "none";
-  // For REST, hide the "Model / Name" field since REST endpoint is in the advanced section
-  document.getElementById("target-name").parentElement.style.display = v === "rest" ? "none" : "";
 
-  const ph = {openai:"gpt-4o  or  http://localhost:11434",rest:"http://my-api:8080",function:"my_module#invoke"};
+  // Show/hide fields based on target type
+  document.getElementById("target-name-field").style.display = (v === "openai" || v === "anthropic" || v === "mistral") ? "" : "none";
+  document.getElementById("target-base-url-field").style.display = v === "custom" ? "" : "none";
+  document.getElementById("target-model-field").style.display = v === "custom" ? "" : "none";
+  document.getElementById("rest-advanced").style.display = v === "rest" ? "" : "none";
+
+  // Clear old values when switching types
+  document.getElementById("target-name").value = "";
+  document.getElementById("target-base-url").value = "";
+  document.getElementById("target-model").value = "";
+
+  const ph = {
+    openai: "gpt-4o",
+    anthropic: "claude-opus-4-8",
+    mistral: "mistral-large-latest",
+    rest: "http://my-api:8080",
+    function: "my_module#invoke"
+  };
   document.getElementById("target-name").placeholder = ph[v] || "";
 }
 

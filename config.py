@@ -95,8 +95,9 @@ def build_generator(spec: dict[str, Any]) -> Generator:
 def build_target(spec: dict[str, Any]) -> Provider:
     """Build a target provider from a config block.
 
-    ``type: rest``       any OpenAI-compatible REST endpoint (name = base URL).
     ``type: openai``     OpenAI API (name = model name, e.g. gpt-4o).
+    ``type: custom``     OpenAI-compatible endpoint (vLLM, Ollama, LM Studio; name = base URL).
+    ``type: rest``       Generic REST endpoint with custom request/response templates.
     ``type: anthropic``  Anthropic API (Claude models).
     ``type: mistral``    Mistral API (Mistral models).
     ``type: function``   Python callable (name = module#fn).
@@ -133,6 +134,13 @@ def build_target(spec: dict[str, Any]) -> Provider:
     if target_type == "openai":
         model = spec.pop("name", spec.pop("model", ""))
         return RestProvider(base_url="https://api.openai.com", model=model, **spec)
+    if target_type == "custom":
+        # Custom OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, etc.)
+        url = spec.pop("base_url", None)
+        if not url:
+            raise ValueError("target type 'custom' requires 'base_url' (base URL)")
+        model = spec.pop("model", "")
+        return RestProvider(base_url=url, model=model, **spec)
     if target_type == "anthropic":
         model = spec.pop("name", spec.pop("model", "claude-opus-4-8"))
         return AnthropicProvider(model=model, **spec)
@@ -145,7 +153,7 @@ def build_target(spec: dict[str, Any]) -> Provider:
             raise ValueError("target type 'function' requires 'name' (module#fn)")
         return CallableProvider.from_module_spec(fn_spec)
     raise ValueError(
-        f"unknown target type {target_type!r} (expected rest | openai | anthropic | mistral | function)"
+        f"unknown target type {target_type!r} (expected rest | openai | custom | anthropic | mistral | function)"
     )
 
 
@@ -164,13 +172,13 @@ def build_judge(spec: dict[str, Any]) -> Judge:
         return MistralJudge(model, **spec)
     if backend == "huggingface":
         return HuggingFaceJudge(model, **spec)
-    if backend == "local":
+    if backend == "local" or backend == "custom":
         url = spec.pop("url", None) or spec.pop("base_url", None)
         if not url:
-            raise ValueError("local judge requires a 'url' or 'base_url' key")
+            raise ValueError(f"{backend} judge requires a 'url' or 'base_url' key")
         return LocalJudge(base_url=url, model=model, **spec)
     raise ValueError(
-        f"unknown judge backend {backend!r} (expected anthropic | mistral | huggingface | local)"
+        f"unknown judge backend {backend!r} (expected anthropic | mistral | huggingface | local | custom)"
     )
 
 
