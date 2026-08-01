@@ -23,6 +23,7 @@ class MultilingualStrategy(Strategy):
     """
 
     id = "multilingual"
+    uses_llm = True
 
     _NAMES: dict[str, str] = {
         "zh": "Mandarin Chinese", "es": "Spanish", "fr": "French",
@@ -64,6 +65,7 @@ class JailbreakStrategy(Strategy):
     """
 
     id = "jailbreak"
+    uses_llm = True
 
     _META = """\
 You are a red-team researcher testing AI safety. Your task is to rewrite the \

@@ -18,6 +18,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 import time
@@ -30,7 +31,7 @@ from config import load_config
 from detectors import get_detector
 from inference import CallableProvider, RestProvider
 from plugins import CATEGORIES, _REGISTRY, all_plugin_ids, category_for_plugin, get_plugin, resolve_plugin_ids
-from strategies import _REGISTRY as _STRATEGY_REGISTRY, apply_strategies, get_strategy
+from strategies import _REGISTRY as _STRATEGY_REGISTRY, get_strategy
 
 
 # --------------------------------------------------------------------------- #
@@ -252,6 +253,14 @@ def _run_plugin_with_topup(plugin, file_base: list) -> tuple:
     return plugin, file_base + new_cases, round(time.perf_counter() - t0, 2)
 
 
+def _strategy_variant(case, strategy, generator):
+    """One strategy variant of one case — the unit of work for the pool.
+
+    Delegates to apply_to_cases so TestCase bookkeeping stays in one place.
+    """
+    return strategy.apply_to_cases([case], generator=generator)[0]
+
+
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
@@ -394,7 +403,6 @@ def main(argv: list[str] | None = None) -> None:
     # file_base: base prompts (strategy=null) already saved for this plugin
     # _run_plugin_with_topup generates only the shortfall to reach num_tests
     run_start = time.perf_counter()
-    plugin_gen_time: dict[str, float] = {}
     all_plugin_results: list[tuple] = []
 
     print("Generating prompts...")
@@ -403,7 +411,6 @@ def main(argv: list[str] | None = None) -> None:
             file_base = [tc for tc in file_cases.get(plugin.id, [])
                          if not tc.metadata.get("strategy")]
             plugin, cases, gen_t = _run_plugin_with_topup(plugin, file_base)
-            plugin_gen_time[plugin.id] = gen_t
             all_plugin_results.append((plugin, cases))
             src = "cached" if not gen_t else f"{gen_t:.1f}s"
             plugin_strats = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
@@ -421,13 +428,12 @@ def main(argv: list[str] | None = None) -> None:
             }
             for future in as_completed(futures):
                 plugin, cases, gen_t = future.result()
-                plugin_gen_time[plugin.id] = gen_t
                 all_plugin_results.append((plugin, cases))
                 src = "cached" if not gen_t else f"{gen_t:.1f}s"
                 plugin_strats = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
                 strat_info = f" + {len(plugin_strats)} strategy(ies)" if plugin_strats else ""
                 print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}")
-    print()
+    print(f"\n[timing] generation: {time.perf_counter() - run_start:.1f}s\n")
 
     # --- build final case lists (apply only strategies missing from file) -----
     # For each plugin:
@@ -438,7 +444,13 @@ def main(argv: list[str] | None = None) -> None:
     all_save_cases: list = []
     final_batches: list[tuple] = []   # (plugin, base_cases, final_cases)
 
-    for plugin, base_cases in all_plugin_results:
+    # Plan first, then execute. Non-LLM strategies are pure string transforms and
+    # run inline; LLM-backed ones cost an API call per prompt, so every such call
+    # across every plugin goes into one pool instead of three nested serial loops.
+    plan: list[tuple] = []      # (plugin, base_cases, file_strat, slots)
+    llm_units: list[tuple] = []  # (plugin_i, slot_i, case_i, case, strategy)
+
+    for p_i, (plugin, base_cases) in enumerate(all_plugin_results):
         file_strat = [tc for tc in file_cases.get(plugin.id, [])
                       if tc.metadata.get("strategy")]
         done = {tc.metadata["strategy"] for tc in file_strat}
@@ -447,9 +459,47 @@ def main(argv: list[str] | None = None) -> None:
         plugin_strategies = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
 
         missing = [s for s in plugin_strategies if s.id not in done]
-        # apply_strategies returns originals + augmented; use it as the full list.
-        all_strat = apply_strategies(base_cases, missing, cfg.generation) if missing else base_cases
-        final_cases = all_strat + file_strat
+
+        slots: list[list] = []
+        for s_i, strat in enumerate(missing):
+            if strat.uses_llm:
+                slots.append([None] * len(base_cases))
+                llm_units.extend(
+                    (p_i, s_i, c_i, case, strat)
+                    for c_i, case in enumerate(base_cases)
+                )
+            else:
+                slots.append(strat.apply_to_cases(base_cases, generator=cfg.generation))
+        plan.append((plugin, base_cases, file_strat, slots))
+
+    if llm_units:
+        n_units = len(llm_units)
+        strat_conc = max(cfg.concurrency, 1)
+        print(f"Applying LLM strategies: {n_units} prompt(s), concurrency={strat_conc}")
+        t0 = time.perf_counter()
+        failed = 0
+        with ThreadPoolExecutor(max_workers=strat_conc) as pool:
+            futures = {
+                pool.submit(_strategy_variant, case, strat, cfg.generation): (p_i, s_i, c_i)
+                for p_i, s_i, c_i, case, strat in llm_units
+            }
+            for done_n, future in enumerate(as_completed(futures), 1):
+                p_i, s_i, c_i = futures[future]
+                try:
+                    plan[p_i][3][s_i][c_i] = future.result()
+                except Exception as exc:
+                    failed += 1
+                    if failed == 1:
+                        print(f"  strategy variant failed (dropped): {exc}", flush=True)
+                if done_n % 25 == 0 or done_n == n_units:
+                    print(f"  {done_n}/{n_units} variants", flush=True)
+        note = f", {failed} dropped" if failed else ""
+        print(f"[timing] strategies: {time.perf_counter() - t0:.1f}s{note}\n", flush=True)
+
+    for plugin, base_cases, file_strat, slots in plan:
+        # Drop any variant whose LLM call failed rather than duplicating the base prompt.
+        variants = [tc for slot in slots for tc in slot if tc is not None]
+        final_cases = list(base_cases) + variants + file_strat
         final_batches.append((plugin, base_cases, final_cases))
         all_save_cases.extend(final_cases)
 
@@ -467,93 +517,162 @@ def main(argv: list[str] | None = None) -> None:
     vulnerable = 0
     by_plugin: dict[str, dict] = {}
 
-    for plugin, base_cases, final_cases in final_batches:
-        plugin_scan_start = time.perf_counter()
-        n_strat = len(final_cases) - len(base_cases)
-        strategy_note = f", {n_strat} strategy-augmented" if n_strat else ""
-        augmented = final_cases
-        gen_t = plugin_gen_time.get(plugin.id, 0.0)
-        print(f"=== {plugin.id} ===")
-        print(f"{len(base_cases)} base attack(s){strategy_note} → {len(final_cases)} total  [generated in {gen_t:.1f}s]\n")
+    async def _evaluate_case(unit, sem):
+        """Attack the target with one case, grade the reply, build its record.
 
-        by_plugin[plugin.id] = {"total": 0, "vulnerable": 0}
+        Returns the record plus the two latencies that matter for tuning: time
+        spent in the target and time spent in the grader.
+        """
+        seq, plugin_id, case, tgt = unit
 
-        total_cases = len(augmented)
-        for i, case in enumerate(augmented, 1):
-            strategy = case.metadata.get("strategy")
+        async with sem:
+            loop = asyncio.get_event_loop()
+            strategy  = case.metadata.get("strategy")
             sev_tag   = f"[{case.severity.upper()}] " if case.severity else ""
             strat_tag = f"[{strategy}] " if strategy else ""
 
-            # Run against every target (single loop when not multi-target)
-            for tgt in cfg.targets:
-                response = tgt.generate(case.prompt)
-                if cfg.delay_ms:
-                    time.sleep(cfg.delay_ms / 1000)
-                obj = case.metadata.get("objective")
-                if obj:
-                    from detectors.custom import CustomDetector
-                    detector = CustomDetector(cfg.grading, objective=obj)
-                else:
-                    detector = get_detector(case.detector_id, cfg.grading)
-                result = detector.grade(
-                    attack=case.prompt, response=response, purpose=cfg.purpose
-                )
+            t0 = time.perf_counter()
+            response = await loop.run_in_executor(None, tgt.generate, case.prompt)
+            t_target = time.perf_counter() - t0
 
-                verdict = "RESISTED " if result.passed else "VULNERABLE"
-                if is_multi:
-                    print(f"  [{i}/{total_cases}] {sev_tag}{strat_tag}{tgt.name:<20} {verdict}")
-                else:
-                    print(f"  [{i}/{total_cases}] {sev_tag}{strat_tag}{verdict}")
+            if cfg.delay_ms:
+                await asyncio.sleep(cfg.delay_ms / 1000)
 
-                cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
-                # objective: prefer metadata (custom plugins set it there), fall back
-                # to the class-level attribute for registry plugins (covers dataset cases).
-                objective = case.metadata.get("objective") or None
-                if not objective:
-                    cls = _REGISTRY.get(case.plugin_id) or _REGISTRY.get(case.detector_id)
-                    objective = getattr(cls, "objective", None) or None
-                all_records.append({
-                    "run_id":                   run_id,
-                    "timestamp":                _now(),
-                    "target":                   tgt.name,
-                    "plugin_id":                case.plugin_id,
-                    "detector_id":              case.detector_id,
-                    "category":                 cat_key,
-                    "category_label":           cat_label,
-                    "objective":                objective,
-                    "frameworks":               case.frameworks or None,
-                    "controls":                 case.controls or None,
-                    "severity":                 case.severity or None,
-                    "strategy":                 strategy,
-                    "attack":                   case.prompt,
-                    "original_prompt":          case.metadata.get("original_prompt"),
-                    "response":                 response,
-                    "passed":                   result.passed,
-                    "score":                    result.score,
-                    "reason":                   result.reason,
-                    "purpose":                  cfg.purpose,
-                    "generation_model":         cfg.generation.name,
-                    "grading_model":            cfg.grading.name,
-                    # ── customisation params ──────────────────────────────────
-                    "language":                 case.metadata.get("language"),
-                    "language_code":            case.metadata.get("language_code"),
-                    "max_chars":                case.metadata.get("max_chars"),
-                    "num_tests":                case.metadata.get("num_tests"),
-                    "generation_instructions":  case.metadata.get("generation_instructions"),
-                    "examples":                 case.metadata.get("examples"),
-                })
+            obj = case.metadata.get("objective")
+            if obj:
+                from detectors.custom import CustomDetector
+                detector = CustomDetector(cfg.grading, objective=obj)
+            else:
+                detector = get_detector(case.detector_id, cfg.grading)
 
-                total += 1
-                by_plugin[plugin.id]["total"] += 1
-                by_plugin[plugin.id].setdefault("severity", case.severity or "")
-                if not result.passed:
-                    vulnerable += 1
-                    by_plugin[plugin.id]["vulnerable"] += 1
+            t1 = time.perf_counter()
+            result = await loop.run_in_executor(
+                None,
+                lambda: detector.grade(attack=case.prompt, response=response, purpose=cfg.purpose),
+            )
+            t_grade = time.perf_counter() - t1
 
-            if is_multi:
-                print()   # blank line between attacks in multi-target mode
+            cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
+            objective = case.metadata.get("objective") or None
+            if not objective:
+                cls = _REGISTRY.get(case.plugin_id) or _REGISTRY.get(case.detector_id)
+                objective = getattr(cls, "objective", None) or None
 
-        print()
+            record = {
+                "run_id": run_id,
+                "timestamp": _now(),
+                "target": tgt.name,
+                "plugin_id": case.plugin_id,
+                "detector_id": case.detector_id,
+                "category": cat_key,
+                "category_label": cat_label,
+                "objective": objective,
+                "frameworks": case.frameworks or None,
+                "controls": case.controls or None,
+                "severity": case.severity or None,
+                "strategy": strategy,
+                "attack": case.prompt,
+                "original_prompt": case.metadata.get("original_prompt"),
+                "response": response,
+                "passed": result.passed,
+                "score": result.score,
+                "reason": result.reason,
+                "purpose": cfg.purpose,
+                "generation_model": cfg.generation.name,
+                "grading_model": cfg.grading.name,
+                "language": case.metadata.get("language"),
+                "language_code": case.metadata.get("language_code"),
+                "max_chars": case.metadata.get("max_chars"),
+                "num_tests": case.metadata.get("num_tests"),
+                "generation_instructions": case.metadata.get("generation_instructions"),
+                "examples": case.metadata.get("examples"),
+            }
+            return {
+                "seq":       seq,
+                "plugin_id": plugin_id,
+                "target":    tgt.name,
+                "verdict":   "RESISTED " if result.passed else "VULNERABLE",
+                "sev_tag":   sev_tag,
+                "strat_tag": strat_tag,
+                "passed":    result.passed,
+                "severity":  case.severity,
+                "record":    record,
+                "t_target":  t_target,
+                "t_grade":   t_grade,
+            }
+
+    async def _evaluate_all(units, concurrency):
+        """Run every case from every plugin in one pool.
+
+        Evaluating per-plugin would cap in-flight requests at that plugin's case
+        count and stall on its slowest case before the next plugin starts.
+        """
+        sem = asyncio.Semaphore(concurrency)
+        tasks = [asyncio.create_task(_evaluate_case(u, sem)) for u in units]
+
+        done_n, n_total, out = 0, len(units), []
+        for fut in asyncio.as_completed(tasks):
+            done_n += 1
+            try:
+                res = await fut
+            except Exception as exc:
+                print(f"  [{done_n}/{n_total}] ERROR: {exc}", flush=True)
+                continue
+            tgt_col = f"{res['target']:<18} " if is_multi else ""
+            print(f"  [{done_n}/{n_total}] {res['plugin_id']:<34} "
+                  f"{res['sev_tag']}{res['strat_tag']}{tgt_col}{res['verdict']}", flush=True)
+            out.append(res)
+        return out
+
+    # One flat pool across all plugins and targets, so `concurrency` is the only
+    # thing bounding how many requests are in flight.
+    units = [
+        (seq, plugin.id, case, tgt)
+        for seq, (plugin, case, tgt) in enumerate(
+            (plugin, case, tgt)
+            for plugin, _, final_cases in final_batches
+            for case in final_cases
+            for tgt in cfg.targets
+        )
+    ]
+    for plugin, _, _ in final_batches:
+        by_plugin[plugin.id] = {"total": 0, "vulnerable": 0}
+
+    eval_concurrency = cfg.concurrency if cfg.concurrency and cfg.concurrency > 1 else 4
+
+    # The [0/N] gives the UI its denominator up front, so the bar reads 0/N
+    # instead of 0/1 until the first case lands.
+    print(f"Evaluating {len(units)} case(s) from {len(final_batches)} plugin(s), "
+          f"concurrency={eval_concurrency}  [0/{len(units)}]\n", flush=True)
+
+    eval_start = time.perf_counter()
+    results = asyncio.run(_evaluate_all(units, eval_concurrency))
+    eval_elapsed = time.perf_counter() - eval_start
+
+    # Display streams in completion order; records are re-sorted so the output
+    # file does not depend on which case happened to finish first.
+    for res in sorted(results, key=lambda r: r["seq"]):
+        all_records.append(res["record"])
+        total += 1
+        by_plugin[res["plugin_id"]]["total"] += 1
+        by_plugin[res["plugin_id"]].setdefault("severity", res["severity"] or "")
+        if not res["passed"]:
+            vulnerable += 1
+            by_plugin[res["plugin_id"]]["vulnerable"] += 1
+
+    if results:
+        t_target_sum = sum(r["t_target"] for r in results)
+        t_grade_sum  = sum(r["t_grade"] for r in results)
+        n = len(results)
+        serial = t_target_sum + t_grade_sum
+        print(f"\n[timing] evaluation: {eval_elapsed:.1f}s wall for {n} case(s)")
+        print(f"[timing]   target : {t_target_sum / n:.2f}s avg/case  "
+              f"({t_target_sum:.1f}s total)")
+        print(f"[timing]   grading: {t_grade_sum / n:.2f}s avg/case  "
+              f"({t_grade_sum:.1f}s total)")
+        print(f"[timing]   effective parallelism: {serial / eval_elapsed:.1f}x "
+              f"of {eval_concurrency} configured")
+    print()
 
     # --- summary --------------------------------------------------------------
     for counts in by_plugin.values():
