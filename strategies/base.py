@@ -29,6 +29,10 @@ class Strategy(ABC):
 
     id: str = ""
 
+    #: True when apply() calls the generation model, so callers know this
+    #: strategy costs one API call per prompt and is worth parallelising.
+    uses_llm: bool = False
+
     @abstractmethod
     def apply(
         self,

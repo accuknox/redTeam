@@ -249,7 +249,9 @@ async def start_scan(req: ScanRequest):
     async def _run():
         try:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, str(KNOX_RT_DIR / "cli.py"),
+                # -u: stdout is a pipe here, so Python would block-buffer it and
+                # the UI would see nothing until ~8KB accrued or the run ended.
+                sys.executable, "-u", str(KNOX_RT_DIR / "cli.py"),
                 "--config", str(config_path),
                 "--output", str(results_path),
                 cwd=str(KNOX_RT_DIR),

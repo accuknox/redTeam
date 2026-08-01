@@ -131,6 +131,10 @@ button{cursor:pointer}
 
 /* ── Config preview ──────────────────────────────────────────────────────── */
 #config-json{width:100%;height:calc(100vh - 160px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-family:var(--mono);font-size:12px;color:var(--text);resize:none;outline:none;line-height:1.6}
+/* Pinned to the top of the scrolling results panel; negative margins cancel
+   the panel's 16px padding so the bar spans its full width. */
+.results-toolbar{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--border);margin:-16px -16px 12px;padding:12px 16px}
+.results-toolbar .copy-btn{margin-bottom:0}
 .copy-btn{margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:5px 12px;font-size:12px;color:var(--text-muted)}
 .copy-btn:hover{border-color:var(--accent);color:var(--accent)}
 
@@ -159,6 +163,12 @@ button{cursor:pointer}
 .plugin-table th{text-align:left;padding:6px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600}
 .plugin-table td{padding:7px 10px;border-bottom:1px solid var(--border)}
 .plugin-table tr:hover td{background:var(--surface2)}
+/* Input/Output table: every case, full untruncated text, scrolled in place. */
+.io-scroll{max-height:70vh;overflow:auto;border:1px solid var(--border);border-radius:6px}
+.io-table{table-layout:fixed}
+.io-table thead th{position:sticky;top:0;background:var(--surface1);z-index:1}
+.io-table td.io-cell{font-size:11px;font-family:var(--mono);white-space:pre-wrap;word-break:break-word;vertical-align:top;line-height:1.45}
+.io-table td{vertical-align:top}
 .bar-wrap{background:var(--surface2);border-radius:3px;height:6px;min-width:80px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
 .bar-fill.safe{background:var(--green)}
@@ -421,6 +431,11 @@ button{cursor:pointer}
         <span class="chevron">›</span>
       </div>
       <div class="section-body open">
+        <!-- Help text -->
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:8px;margin-bottom:12px;font-size:11px;color:var(--text-muted);line-height:1.5">
+          <strong>Tests per Plugin:</strong> Number of adversarial prompts to generate for each attack type.<br>
+          <strong>Parallel Workers:</strong> Run multiple test evaluations simultaneously (prompt → target → grade). Higher = faster but more resources.
+        </div>
         <!-- Basic parameters -->
         <div class="row2">
           <div class="field">
@@ -451,9 +466,16 @@ button{cursor:pointer}
             <input id="max-chars" type="number" placeholder="none" min="50">
           </div>
         </div>
-        <div class="field">
-          <label>Delay Between Calls (ms)</label>
-          <input id="delay" type="number" placeholder="0" min="0">
+        <div class="row2">
+          <div class="field">
+            <label>Delay Between Calls (ms)</label>
+            <input id="delay" type="number" placeholder="0" min="0">
+          </div>
+          <div class="field">
+            <label>Parallel Workers <span style="font-size:11px;color:var(--text-muted)">ⓘ</span></label>
+            <input id="concurrency" type="number" value="4" min="1" max="32" title="Run multiple test cases in parallel. Each worker: sends prompt → gets response → grades it. 1=sequential, 4-8=recommended, 16+=very fast">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Each worker runs: prompt → target → grade (1=slow, 4-8=best, 16+=fast)</div>
+          </div>
         </div>
 
         <!-- Instructions & Examples -->
@@ -1057,6 +1079,7 @@ function buildConfig() {
   const sev  = document.getElementById('severity').value;
   const mc   = +document.getElementById('max-chars').value || 0;
   const delay = +document.getElementById('delay').value || 0;
+  const concurrency = +document.getElementById('concurrency').value || 4;
   const gi   = document.getElementById('gen-instructions').value.trim();
   const ex   = document.getElementById('examples').value.trim();
   const globalInstructions = document.getElementById('global-instructions').value.trim();
@@ -1218,6 +1241,7 @@ function buildConfig() {
     grading,
     target,
     num_tests: numTests,
+    concurrency: concurrency,
     plugins: pluginList,
     strategies: selectedStrats.length ? selectedStrats : undefined,
   };
@@ -1337,16 +1361,24 @@ function setRunning(on) {
 }
 
 // ── Results renderer ──────────────────────────────────────────────────────────
+// Attack prompts and target responses are untrusted text — a red-teamed model
+// can emit markup, so everything interpolated into innerHTML goes through this.
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 function renderResults(data) {
   const s = data.summary || {};
   const results = data.results || [];
   const byPlugin = s.by_plugin || {};
 
   const html = `
-    <div style="margin-bottom:16px">
+    <div class="results-toolbar">
       <button class="copy-btn" onclick="downloadResultsJSON()">⬇ Download Results JSON</button>
     </div>
-    
+
     <div class="results-grid">
       <div class="stat-card"><div class="num">${s.total||0}</div><div class="lbl">Total cases</div></div>
       <div class="stat-card danger"><div class="num">${s.vulnerable||0}</div><div class="lbl">Vulnerable</div></div>
@@ -1372,48 +1404,27 @@ function renderResults(data) {
       </tbody>
     </table>
     
-    <h3 style="font-size:13px;color:var(--text-muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.4px">Input / Output</h3>
-    <table class="plugin-table" style="width:100%;table-layout:auto">
-      <thead><tr><th>Plugin</th><th>Input Prompt</th><th>Output Response</th><th>Verdict</th></tr></thead>
-      <tbody>
-        ${(results || []).slice(0, 100).map((r, i) => `<tr>
-          <td style="font-size:11px;font-family:var(--mono)">${r.plugin_id || '—'}</td>
-          <td style="font-size:11px;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showFullContent('Input', '${(r.attack || '').replace(/'/g, "\\'")}'" title="Click to see full content">${(r.attack || '').slice(0, 80)}${(r.attack || '').length > 80 ? '…' : ''}</td>
-          <td style="font-size:11px;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showFullContent('Output', '${(r.response || '').replace(/'/g, "\\'")}'" title="Click to see full content">${(r.response || '').slice(0, 80)}${(r.response || '').length > 80 ? '…' : ''}</td>
-          <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-
-    <!-- Modal for full content -->
-    <div id="content-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;padding:20px;overflow:auto">
-      <div style="background:var(--surface1);border-radius:8px;padding:16px;max-width:90%;margin:20px auto;max-height:80vh;overflow:auto">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <h3 id="modal-title" style="margin:0;font-size:14px">Content</h3>
-          <button onclick="document.getElementById('content-modal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer">✕</button>
-        </div>
-        <pre id="modal-content" style="margin:0;font-size:12px;font-family:var(--mono);white-space:pre-wrap;word-wrap:break-word;color:var(--text-secondary)"></pre>
-      </div>
+    <h3 style="font-size:13px;color:var(--text-muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.4px">
+      Input / Output <span style="text-transform:none;letter-spacing:0">(${(results || []).length} cases)</span>
+    </h3>
+    <div class="io-scroll">
+      <table class="plugin-table io-table">
+        <colgroup><col style="width:14%"><col style="width:35%"><col style="width:39%"><col style="width:12%"></colgroup>
+        <thead><tr><th>Plugin</th><th>Input Prompt</th><th>Output Response</th><th>Verdict</th></tr></thead>
+        <tbody>
+          ${(results || []).map(r => `<tr>
+            <td style="font-size:11px;font-family:var(--mono)">${esc(r.plugin_id || '—')}</td>
+            <td class="io-cell">${esc(r.attack || '')}</td>
+            <td class="io-cell">${esc(r.response || '')}</td>
+            <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
     </div>
-    ${results.length > 100 ? `<div style="color:var(--text-muted);font-size:11px;margin-top:8px">… and ${results.length - 100} more cases</div>` : ''}
   `;
   document.getElementById('results-content').innerHTML = html;
   window.lastResultsData = data; // Save for download
 }
-
-function showFullContent(title, content) {
-  document.getElementById('modal-title').textContent = title;
-  document.getElementById('modal-content').textContent = content;
-  document.getElementById('content-modal').style.display = 'block';
-}
-
-// Close modal on background click
-document.addEventListener('click', function(e) {
-  const modal = document.getElementById('content-modal');
-  if (modal && e.target === modal) {
-    modal.style.display = 'none';
-  }
-});
 
 function downloadResultsJSON() {
   if (!window.lastResultsData) {

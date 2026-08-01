@@ -1,4 +1,33 @@
+# Python
 __pycache__/
-myenv
-
+*.py[cod]
 *.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.spec.bak
+
+# Virtual environments
+myenv/
+.venv/
+venv/
+env/
+
+# PyInstaller
+dist/
+build/
+*.spec.bak
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Knox-RT runtime output
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
