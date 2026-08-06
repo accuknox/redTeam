@@ -366,6 +366,12 @@ def health():
     return {"status": "ok"}
 
 
+def run() -> None:
+    """Console-script entry point (`knox-rt-ui`) for the installed package."""
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)

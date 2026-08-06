@@ -1,0 +1,6 @@
+vllm>=0.6.0
+flask>=3.0.0
+transformers>=4.45.0
+huggingface_hub>=0.25.0
+peft>=0.13.0
+torch>=2.4.0
