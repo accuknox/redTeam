@@ -8,11 +8,26 @@ version = "0.1.0"
 description = "Knox Red Team — LLM adversarial testing toolkit by AccuKnox"
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "AccuKnox", email = "support@accuknox.com" }]
+keywords = ["llm", "red-team", "security", "adversarial-testing", "jailbreak"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "jinja2>=3.1.6",
     "pyyaml>=6.0",
     "requests>=2.31.0",
 ]
+
+[project.urls]
+Homepage   = "https://github.com/accuknox/redTeam"
+Repository = "https://github.com/accuknox/redTeam"
+Issues     = "https://github.com/accuknox/redTeam/issues"
 
 [project.optional-dependencies]
 anthropic    = ["anthropic>=0.109.2"]
@@ -20,14 +35,25 @@ mistral      = ["mistralai>=1.0.0"]
 openai       = ["openai>=1.0.0"]
 huggingface  = ["transformers>=4.40.0", "torch>=2.2.0"]
 all          = ["anthropic>=0.109.2", "mistralai>=1.0.0", "openai>=1.0.0"]
+ui           = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.0.0",
+    "python-multipart>=0.0.9",
+    "sse-starlette>=2.0.0",
+]
 build        = ["anthropic>=0.109.2", "mistralai>=1.0.0", "openai>=1.0.0", "pyinstaller>=6.0.0"]
 
 [project.scripts]
-knox-rt = "cli:main"
+knox-rt    = "cli:main"
+knox-rt-ui = "ui.backend.main:run"
 
 [tool.setuptools.packages.find]
 where   = ["."]
-include = ["plugins*", "detectors*", "strategies*", "inference*"]
+include = ["plugins*", "detectors*", "strategies*", "inference*", "ui*"]
+
+[tool.setuptools.package-data]
+"ui.backend" = ["static/*"]
 
 [tool.setuptools]
 py-modules = ["cli", "run", "config"]
