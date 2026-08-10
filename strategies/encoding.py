@@ -20,6 +20,7 @@ class Base64Strategy(Strategy):
     """
 
     id = "base64"
+    description = "Encodes the attack in Base64 and asks the model to decode and comply. Probes whether the content filter sees through Base64."
 
     def apply(self, prompt: str, **_: Any) -> str:
         encoded = base64.b64encode(prompt.encode()).decode()
@@ -37,6 +38,7 @@ class Rot13Strategy(Strategy):
     """
 
     id = "rot13"
+    description = "ROT13-encodes the attack. Probes shallow pattern-matching filters that miss simple substitution ciphers."
 
     def apply(self, prompt: str, **_: Any) -> str:
         encoded = codecs.encode(prompt, "rot_13")
@@ -50,6 +52,7 @@ class LeetspeakStrategy(Strategy):
     """
 
     id = "leetspeak"
+    description = "Rewrites the attack in leet speak (a→4, e→3). Probes lexical keyword filters that don't normalise character substitutions."
 
     _MAP = str.maketrans("AaEeIiOoSsBbGgTt", "4433110055889977")
 

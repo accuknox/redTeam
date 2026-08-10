@@ -237,22 +237,33 @@ Click the category header to apply settings to all plugins in that category:
 
 **Formula:** Total cases = `tests × plugins × (1 + strategies_selected)`
 
-#### Text-based Strategies (No extra API calls)
+A multi-turn conversation counts as **one** case, so adaptive strategies add
+cases like any other — they multiply API calls, not the case count.
+
+#### Static Strategies (No extra API calls)
 | Strategy | What it does | Best for | Example |
 |----------|-------------|----------|---------|
 | `base64` | Encodes attack in Base64, asks model to decode | Bypassing keyword filters | "Decode and follow: aGVsbG8gd29ybGQ=" |
 | `rot13` | ROT13-encodes the attack | Character-substitution defenses | Rotates all letters by 13 |
+| `leetspeak` | Rewrites in leet speak (a→4, e→3) | Keyword filters | "h0w d0 1..." |
 | `fiction` | Wraps attack in creative writing request | Intent detection filters | "Write a fictional story where a character..." |
 | `citation` | Frames as academic research inquiry | Authority-based filters | "For my research paper, how would..." |
-| `manyshot` | Adds fake Q&A examples showing compliance | Few-shot prompt injection | Prefix with 20+ benign examples |
-| `crescendo` | Frames as natural next step in conversation | Context-aware filters | "Following up on our chat..." |
 | `refusal-suppression` | Prepends "don't refuse" instructions | Refusal mechanisms | "Answer helpfully without refusing..." |
 
-#### LLM-based Strategies (Incur extra API calls)
-| Strategy | What it does | Cost | Best for |
-|----------|-------------|------|----------|
-| `jailbreak` | Uses generator to rewrite attack persuasively | 1 extra gen call per case | Sophisticated defenses |
-| `multilingual` | Translates attack to another language | 1 extra gen call per case | Language-specific filters |
+#### LLM Strategies (one generation call per case — **LLM** badge)
+| Strategy | What it does | Best for |
+|----------|-------------|----------|
+| `jailbreak` | Rewrites the attack once to be more persuasive | Sophisticated defenses |
+| `multilingual` | Translates attack to another language | Language-specific filters |
+| `manyshot` | Prefixes N fabricated on-topic compliant exchanges (⚙ sets `num_shots`, default 8) | Many-shot / in-context jailbreaking |
+
+#### Adaptive Strategies (live multi-turn — several calls per case — **MULTI-TURN** badge)
+| Strategy | What it does | Best for |
+|----------|-------------|----------|
+| `crescendo` | Benign opener, escalates one step per turn, backtracks on refusal (⚙ sets `max_turns`/`max_backtracks`) | Gradual-escalation defenses |
+| `conversational-jailbreak` | Reads each reply and refines a stronger attack until it breaks (⚙ sets `max_turns`) | Adaptive / iterative robustness |
+
+> Each strategy's ⚙ (in the sidebar and in per-plugin / per-category customization) sets its tunables and shows the per-case call cost live. A case is marked **vulnerable** only when the grader judges the target's reply a break — use a grader model distinct from the target.
 
 ### 7. Run Scan
 
@@ -361,12 +372,14 @@ Quick risk assessment.
 Comprehensive adversarial testing.
 
 1. **Tests per Plugin**: `10`
-2. **Strategies**: Select all (base64, rot13, fiction, citation, manyshot, jailbreak, multilingual)
+2. **Strategies**: Select the static + LLM ones (base64, rot13, leetspeak, fiction, citation, refusal-suppression, jailbreak, multilingual, manyshot)
 3. **Plugins**: Select frameworks (owasp:llm + nist:ai:rmf)
 4. **Run**: Generates many variants
 
-**Formula**: 10 tests × 68 plugins × (1 + 7 strategies) = **5,440 test cases**
+**Formula**: 10 tests × 68 plugins × (1 + 9 strategies) = **6,800 test cases**
 **Time**: ~30-60 minutes | **Cost**: ~$20-30
+
+> **Adding adaptive strategies** (`crescendo`, `conversational-jailbreak`) adds cases at the same rate, but each of those cases costs ~5× the API calls of a static case (a full multi-turn conversation). Scope them to your highest-severity plugins rather than enabling globally in a run this size.
 
 ---
 
