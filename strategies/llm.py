@@ -23,6 +23,7 @@ class MultilingualStrategy(Strategy):
     """
 
     id = "multilingual"
+    description = "Uses the generation model to translate the attack into another language. Probes whether filters are English-centric. Costs one API call per prompt."
     uses_llm = True
 
     _NAMES: dict[str, str] = {
@@ -65,6 +66,7 @@ class JailbreakStrategy(Strategy):
     """
 
     id = "jailbreak"
+    description = "Uses the generation model to rewrite the attack more persuasively (PAIR-inspired). Costs one API call per prompt."
     uses_llm = True
 
     _META = """\

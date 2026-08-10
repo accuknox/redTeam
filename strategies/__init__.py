@@ -24,8 +24,11 @@ Config-driven (config.yaml `strategies:` key)::
 Available strategies
 --------------------
 No-LLM  : base64, rot13, leetspeak  (strategies/encoding.py)
-          fiction, citation, refusal-suppression, manyshot, crescendo  (strategies/wrapping.py)
+          fiction, citation, refusal-suppression  (strategies/wrapping.py)
 LLM     : jailbreak, multilingual  (strategies/llm.py)
+          manyshot — generates on-domain compliance shots  (strategies/wrapping.py)
+Adaptive: conversational-jailbreak, crescendo — multi-turn, need the target
+          (strategies/conversational.py)
 """
 
 from __future__ import annotations
@@ -42,9 +45,12 @@ from strategies.wrapping import (
     CitationStrategy,
     RefusalSuppressionStrategy,
     ManyshotStrategy,
-    CrescendoStrategy,
 )
 from strategies.llm import JailbreakStrategy, MultilingualStrategy
+from strategies.conversational import (
+    ConversationalJailbreakStrategy,
+    CrescendoStrategy,
+)
 
 _REGISTRY: dict[str, type[Strategy]] = {
     cls.id: cls  # type: ignore[misc]
@@ -59,6 +65,7 @@ _REGISTRY: dict[str, type[Strategy]] = {
         CrescendoStrategy,
         JailbreakStrategy,
         MultilingualStrategy,
+        ConversationalJailbreakStrategy,
     ]
 }
 
@@ -113,6 +120,7 @@ __all__ = [
     "CrescendoStrategy",
     "JailbreakStrategy",
     "MultilingualStrategy",
+    "ConversationalJailbreakStrategy",
     "get_strategy",
     "apply_strategies",
 ]

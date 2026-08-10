@@ -111,7 +111,14 @@ def _load_strategies() -> list[dict]:
     try:
         from strategies import _REGISTRY
         return [
-            {"id": sid, "description": getattr(cls, "description", "")}
+            {
+                "id": sid,
+                "description": getattr(cls, "description", ""),
+                # Lets the UI warn that this one costs an API call per prompt.
+                "uses_llm": bool(getattr(cls, "uses_llm", False)),
+                # Multi-turn: driven at evaluation time, several calls per case.
+                "interactive": bool(getattr(cls, "interactive", False)),
+            }
             for sid, cls in _REGISTRY.items()
         ]
     except Exception:

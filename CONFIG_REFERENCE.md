@@ -485,25 +485,52 @@ strategies:
 
   - id: manyshot
     config:
-      num_shots: 15   # default: 10
+      num_shots: 16   # default: 8
+
+  - id: crescendo
+    config:
+      max_turns: 6       # default: 5
+      max_backtracks: 3  # default: 3
+
+  - id: conversational-jailbreak
+    config:
+      max_turns: 5       # default: 4
 ```
 
 ### Full strategy reference
 
-| Strategy id | Needs LLM | Config keys | Description |
-|---|---|---|---|
-| `base64` | no | — | Encodes the attack in Base64 and asks the model to decode and comply |
-| `rot13` | no | — | ROT13-encodes the attack |
-| `leetspeak` | no | — | Converts to leet speak — probes keyword-based filters |
-| `fiction` | no | — | Wraps the attack in a creative writing / novel request |
-| `citation` | no | — | Frames the attack as an academic research inquiry |
-| `refusal-suppression` | no | — | Prepends "don't refuse or add caveats" instructions |
-| `manyshot` | no | `num_shots` (default `10`) | Prefixes with N fake compliant Q&A exchanges |
-| `crescendo` | no | — | Frames as the natural next step in an ongoing conversation |
-| `jailbreak` | **yes** | — | Uses the generation model to rewrite the attack to be more persuasive |
-| `multilingual` | **yes** | `language` (**required**) | Translates the attack to another language — probes language-specific filters. Supported: `zh es fr de ar ru ja pt ko hi` |
+Strategies fall into three cost tiers. **Static** transforms run before the
+target is contacted and cost nothing extra. **LLM** strategies call the
+generation model once per case. **Adaptive** strategies hold a live multi-turn
+conversation with the target, costing several calls per case.
 
-> **LLM-based strategies** use the generation model and incur extra API calls — one call per case per strategy.
+| Strategy id | Tier | Config keys | Description |
+|---|---|---|---|
+| `base64` | static | — | Encodes the attack in Base64 and asks the model to decode and comply |
+| `rot13` | static | — | ROT13-encodes the attack |
+| `leetspeak` | static | — | Converts to leet speak — probes keyword-based filters |
+| `fiction` | static | — | Wraps the attack in a creative writing / novel request |
+| `citation` | static | — | Frames the attack as an academic research inquiry |
+| `refusal-suppression` | static | — | Prepends "don't refuse or add caveats" instructions |
+| `jailbreak` | LLM | — | Uses the generation model to rewrite the attack once to be more persuasive (single-shot; no target feedback) |
+| `multilingual` | LLM | `language` (**required**) | Translates the attack to another language — probes language-specific filters. Supported: `zh es fr de ar ru ja pt ko hi` |
+| `manyshot` | LLM | `num_shots` (default `8`) | Prefixes the attack with N fabricated on-topic exchanges where the assistant complies, conditioning the model to continue the pattern (many-shot jailbreaking). Generated in the attack's own domain; falls back to a static block if the generator is unavailable |
+| `crescendo` | **adaptive** | `max_turns` (default `5`), `max_backtracks` (default `3`) | Multi-turn attack (Microsoft Crescendo): opens benign, escalates one step per turn building on the target's own answers, and backtracks to a gentler step on refusal |
+| `conversational-jailbreak` | **adaptive** | `max_turns` (default `4`) | Multi-turn PAIR attack: reads the target's reply each turn and refines a stronger full attack until it succeeds or runs out of turns |
+
+> **LLM strategies** use the generation model — one extra call per case.
+>
+> **Adaptive strategies** (`crescendo`, `conversational-jailbreak`) run a live
+> conversation: roughly `max_turns` target calls + `max_turns` judge calls +
+> ~`max_turns` attacker calls per case — about 5× the cost of a static case.
+> They stop early the moment the target breaks, so a weak target costs one turn.
+> Scope them to high-severity plugins rather than enabling globally.
+>
+> **Verdict:** a case is marked `vulnerable` only when the grading model judges
+> the target's reply a break. For the adaptive strategies this is a *search* —
+> more turns give more chances to trip the judge, including false trips — so use
+> a grader model distinct from the target, and treat a rise in findings as
+> unverified until confirmed.
 
 ---
 

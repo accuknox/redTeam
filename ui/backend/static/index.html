@@ -116,10 +116,25 @@ button{cursor:pointer}
 .fw-pill:hover,.fw-pill.on{border-color:var(--accent);background:var(--accent-dim);color:var(--text)}
 
 /* ── Strategy ────────────────────────────────────────────────────────────── */
-.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
-.strat-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:4px;cursor:pointer;font-size:12px}
+/* Single column: each strategy carries a description under its id, like plugins. */
+/* Two columns, tops aligned. A row with its ⚙ panel open spans both columns
+   so the config inputs get full width instead of a cramped half. */
+.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;align-items:start}
+.strat-row{min-width:0}
+.strat-row.open{grid-column:1 / -1}
+.strat-item{display:flex;align-items:flex-start;padding:6px;border-radius:4px;cursor:pointer;font-size:12px}
 .strat-item:hover{background:var(--surface2)}
-.strat-item input[type=checkbox]{accent-color:var(--accent);width:13px;height:13px}
+.strat-item input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex:none;margin:2px 12px 0 2px}
+.strat-text{min-width:0;flex:1}
+.strat-id{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text)}
+.strat-desc{font-size:11px;color:var(--text-muted);line-height:1.3;margin-top:2px}
+.strat-llm{display:inline-block;margin-left:6px;padding:0 5px;border-radius:8px;font-size:9px;font-weight:600;letter-spacing:0.3px;background:var(--surface2);color:var(--text-muted)}
+.strat-gear{margin-left:6px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0;line-height:1}
+.strat-gear:hover{color:var(--accent)}
+.strat-opts{padding:8px 6px 8px 27px;display:flex;flex-direction:column;gap:6px}
+.strat-opt-field{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--text-muted)}
+.strat-opt-field input{width:70px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;padding:2px 6px}
+.strat-cost{font-size:10px;color:var(--text-muted);font-style:italic;line-height:1.35}
 
 /* ── Main tabs ───────────────────────────────────────────────────────────── */
 .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface);padding:0 16px;flex-shrink:0}
@@ -169,6 +184,16 @@ button{cursor:pointer}
 .io-table thead th{position:sticky;top:0;background:var(--surface1);z-index:1}
 .io-table td.io-cell{font-size:11px;font-family:var(--mono);white-space:pre-wrap;word-break:break-word;vertical-align:top;line-height:1.45}
 .io-table td{vertical-align:top}
+/* Multi-turn cases: the whole conversation, in a full-width row under the case. */
+.turn-tag{margin-top:4px;font-size:9px;font-weight:600;letter-spacing:0.3px;color:var(--text-muted)}
+.turns-row td{padding:0 10px 10px}
+.turns{font-size:11px}
+.turns summary{cursor:pointer;color:var(--accent);padding:4px 0;user-select:none}
+.turn{border-left:2px solid var(--border);padding:2px 0 2px 10px;margin:8px 0}
+.turn-h{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:0.4px;color:var(--text-muted);margin-bottom:4px}
+.turn-a,.turn-r{font-family:var(--mono);white-space:pre-wrap;word-break:break-word;line-height:1.45;margin:4px 0}
+.turn-r{color:var(--text-muted)}
+.turn-lbl{display:inline-block;min-width:52px;font-size:9px;font-weight:600;letter-spacing:0.3px;color:var(--text-muted)}
 .bar-wrap{background:var(--surface2);border-radius:3px;height:6px;min-width:80px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
 .bar-fill.safe{background:var(--green)}
@@ -945,14 +970,112 @@ function refreshPluginCheckboxes() {
   });
 }
 
+// Per-strategy tunables. Only the strategies listed here get a ⚙ panel; the
+// rest are plain on/off. `cost` renders live from the current values so the
+// user sees what a change costs before running.
+const STRAT_OPTS = {
+  'conversational-jailbreak': {
+    fields: [{ key: 'max_turns', label: 'Max turns', def: 4, min: 1 }],
+    cost: v => `≈ up to ${v.max_turns} target + ${v.max_turns} judge + ${Math.max(0, v.max_turns - 1)} attacker calls per case`,
+  },
+  'crescendo': {
+    fields: [
+      { key: 'max_turns', label: 'Max turns', def: 5, min: 1 },
+      { key: 'max_backtracks', label: 'Max backtracks', def: 3, min: 0 },
+    ],
+    cost: v => `≈ up to ${v.max_turns} target + ${v.max_turns} judge + ${v.max_turns} attacker calls per case`,
+  },
+  'manyshot': {
+    fields: [{ key: 'num_shots', label: 'Number of shots', def: 8, min: 1 }],
+    cost: v => `${v.num_shots} fabricated exchanges + 1 generation call per case`,
+  },
+};
+
+// ── Strategy picker ───────────────────────────────────────────────────────────
+// One renderer for all three scopes (global sidebar, per-category, per-plugin).
+// `scope` namespaces the ⚙ inputs so the same strategy configured in two places
+// doesn't clash. `onchange` is the JS run when a checkbox toggles.
+
+function stratTag(s) {
+  if (s.interactive) return '<span class="strat-llm" title="Multi-turn: refines against the target, several calls per case">MULTI-TURN</span>';
+  if (s.uses_llm) return '<span class="strat-llm" title="Calls the generation model once per prompt">LLM</span>';
+  return '';
+}
+
+function stratRowHTML(s, scope, inputClass, onchange) {
+  const opts = STRAT_OPTS[s.id];
+  const cls = inputClass ? ` class="${inputClass}"` : '';
+  const gear = opts
+    ? `<button type="button" class="strat-gear" title="Configure ${esc(s.id)}" onclick="toggleStratOpts(event, '${esc(scope)}', '${esc(s.id)}')">⚙</button>`
+    : '';
+  const panel = opts ? stratOptsPanelHTML(scope, s.id, opts, onchange) : '';
+  return `<div class="strat-row">` +
+    `<label class="strat-item">` +
+      `<input type="checkbox"${cls} value="${esc(s.id)}" onchange="${onchange}">` +
+      `<span class="strat-text">` +
+        `<span class="strat-id">${esc(s.id)}</span>${stratTag(s)}${gear}` +
+        `<div class="strat-desc">${esc(s.description || '')}</div>` +
+      `</span>` +
+    `</label>${panel}</div>`;
+}
+
+function stratOptsPanelHTML(scope, sid, opts, onchange) {
+  const inputs = opts.fields.map(f =>
+    `<label class="strat-opt-field"><span>${esc(f.label)}</span>` +
+       `<input type="number" class="strat-opt" data-scope="${esc(scope)}" data-sid="${esc(sid)}" data-key="${f.key}"` +
+              ` min="${f.min}" value="${f.def}"` +
+              ` oninput="updateStratCost('${esc(scope)}','${esc(sid)}'); ${onchange}"></label>`
+  ).join('');
+  return `<div class="strat-opts" data-scope="${esc(scope)}" data-sid="${esc(sid)}" style="display:none">` +
+    inputs +
+    `<div class="strat-cost" data-scope="${esc(scope)}" data-sid="${esc(sid)}">${esc(opts.cost(defaultStratVals(sid)))}</div>` +
+  `</div>`;
+}
+
+function defaultStratVals(sid) {
+  return Object.fromEntries(STRAT_OPTS[sid].fields.map(f => [f.key, f.def]));
+}
+
+function currentStratVals(scope, sid) {
+  const vals = defaultStratVals(sid);
+  document.querySelectorAll(`.strat-opt[data-scope="${scope}"][data-sid="${sid}"]`).forEach(inp => {
+    const n = parseInt(inp.value, 10);
+    if (!Number.isNaN(n)) vals[inp.dataset.key] = n;
+  });
+  return vals;
+}
+
+function toggleStratOpts(ev, scope, sid) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const panel = document.querySelector(`.strat-opts[data-scope="${scope}"][data-sid="${sid}"]`);
+  if (!panel) return;
+  const open = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  // Let the open row span both columns so its inputs get full width.
+  panel.closest('.strat-row')?.classList.toggle('open', open);
+}
+
+function updateStratCost(scope, sid) {
+  const el = document.querySelector(`.strat-cost[data-scope="${scope}"][data-sid="${sid}"]`);
+  if (el) el.textContent = STRAT_OPTS[sid].cost(currentStratVals(scope, sid));
+}
+
+// Plain id unless the strategy has tunables changed from their defaults, in
+// which case the {id, config} form the config loader accepts.
+function strategyEntry(scope, sid) {
+  if (!STRAT_OPTS[sid]) return sid;
+  const vals = currentStratVals(scope, sid), defs = defaultStratVals(sid);
+  const config = {};
+  for (const k of Object.keys(vals)) if (vals[k] !== defs[k]) config[k] = vals[k];
+  return Object.keys(config).length ? { id: sid, config } : sid;
+}
+
 function renderStrategies() {
   const grid = document.getElementById('strat-grid');
-  strategies.forEach(s => {
-    const label = document.createElement('label');
-    label.className = 'strat-item';
-    label.innerHTML = `<input type="checkbox" value="${s.id}" onchange="updateBadge();updateConfig()"><span>${s.id}</span>`;
-    grid.appendChild(label);
-  });
+  grid.innerHTML = strategies
+    .map(s => stratRowHTML(s, 'global', '', 'updateBadge();updateConfig()'))
+    .join('');
 }
 
 function updateBadge() {
@@ -1163,7 +1286,8 @@ function buildConfig() {
     }
   }
 
-  const selectedStrats = [...document.querySelectorAll('#strat-grid input:checked')].map(c => c.value);
+  const selectedStrats = [...document.querySelectorAll('#strat-grid input[type=checkbox]:checked')]
+    .map(c => strategyEntry('global', c.value));
 
   const pluginList = [
     // Framework entries from selectedFrameworks
@@ -1413,12 +1537,29 @@ function renderResults(data) {
         <colgroup><col style="width:14%"><col style="width:35%"><col style="width:39%"><col style="width:12%"></colgroup>
         <thead><tr><th>Plugin</th><th>Input Prompt</th><th>Output Response</th><th>Verdict</th></tr></thead>
         <tbody>
-          ${(results || []).map(r => `<tr>
-            <td style="font-size:11px;font-family:var(--mono)">${esc(r.plugin_id || '—')}</td>
-            <td class="io-cell">${esc(r.attack || '')}</td>
-            <td class="io-cell">${esc(r.response || '')}</td>
-            <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
-          </tr>`).join('')}
+          ${(results || []).map(r => {
+            const turns = (r.transcript || []).length;
+            // Multi-turn: attack/response hold only the LAST turn, so the row
+            // gets a full-width detail row carrying the whole conversation.
+            const main = `<tr>
+              <td style="font-size:11px;font-family:var(--mono)">${esc(r.plugin_id || '—')}${
+                turns > 1 ? `<div class="turn-tag">${turns} turns</div>` : ''}</td>
+              <td class="io-cell">${turns > 1
+                ? `<div class="turn-h">final turn ${turns} of ${turns}</div>` : ''}${esc(r.attack || '')}</td>
+              <td class="io-cell">${esc(r.response || '')}</td>
+              <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
+            </tr>`;
+            if (turns < 2) return main;
+            return main + `<tr class="turns-row"><td colspan="4">
+              <details class="turns">
+                <summary>Show all ${turns} turns of the conversation</summary>
+                ${r.transcript.map(t => `<div class="turn">
+                  <div class="turn-h">Turn ${t.turn} — ${t.passed ? 'resisted' : 'COMPLIED'}</div>
+                  <div class="turn-a"><span class="turn-lbl">ATTACK</span>${esc(t.attack || '')}</div>
+                  <div class="turn-r"><span class="turn-lbl">REPLY</span>${esc(t.response || '')}</div>
+                </div>`).join('')}
+              </details></td></tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>
@@ -1437,7 +1578,10 @@ function downloadResultsJSON() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `knox-rt-results-${new Date().toISOString().slice(0, 10)}.json`;
+  // Timestamp to the second so multiple runs on the same day don't collide
+  // (…(1).json). 2026-08-11T00-23-45 — ':' swapped for '-' for filesystem safety.
+  const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+  a.download = `knox-rt-results-${stamp}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1659,7 +1803,7 @@ function renderCategories(categories) {
       </div>
       <div class="field" style="margin-bottom:0">
         <label style="font-size:10px">Strategies (for this category)</label>
-        <div class="cat-strat-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px" data-cat-key="${cat.key}" id="cat-strat-grid-${cat.key}"></div>
+        <div class="cat-strat-grid strat-grid" data-cat-key="${cat.key}" id="cat-strat-grid-${cat.key}"></div>
       </div>
       <div class="field" style="margin-top:8px;margin-bottom:0">
         <label style="font-size:10px">Category Instructions (apply to all plugins)</label>
@@ -1733,7 +1877,7 @@ function renderCategories(categories) {
           </div>
           <div class="field" style="margin-top:8px;margin-bottom:0">
             <label style="font-size:10px">Strategies (for this plugin)</label>
-            <div class="plugin-strat-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px" data-plugin-id="${plugin.id}" id="plugin-strat-grid-${plugin.id}"></div>
+            <div class="plugin-strat-grid strat-grid" data-plugin-id="${plugin.id}" id="plugin-strat-grid-${plugin.id}"></div>
           </div>
           <div class="field" style="margin-top:8px;margin-bottom:0">
             <label style="font-size:10px">Plugin Instructions (optional)</label>
@@ -1766,58 +1910,27 @@ function selectAllInCategory(catKey, checked) {
 }
 
 function populateCategoryStrategies() {
-  strategies.forEach(s => {
-    document.querySelectorAll('.cat-strat-grid').forEach(grid => {
-      const catKey = grid.dataset.catKey;
-      const label = document.createElement('label');
-      label.style.display = 'flex';
-      label.style.alignItems = 'center';
-      label.style.gap = '6px';
-      label.style.fontSize = '11px';
-      label.style.padding = '4px 6px';
-      label.style.borderRadius = '3px';
-      label.style.cursor = 'pointer';
-      label.style.userSelect = 'none';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.value = s.id;
-      input.className = 'cat-opt-strategy';
-      input.dataset.catKey = catKey;
-      input.onchange = () => saveCategoryCustomization(catKey);
-      label.appendChild(input);
-      const span = document.createElement('span');
-      span.textContent = s.id;
-      label.appendChild(span);
-      grid.appendChild(label);
-    });
+  document.querySelectorAll('.cat-strat-grid').forEach(grid => {
+    const catKey = grid.dataset.catKey;
+    const scope = `cat:${catKey}`;
+    grid.innerHTML = strategies
+      .map(s => stratRowHTML(s, scope, 'cat-opt-strategy',
+                             `saveCategoryCustomization('${esc(catKey)}')`))
+      .join('');
+    // The input class is used by the collector; tag each with its catKey.
+    grid.querySelectorAll('.cat-opt-strategy').forEach(cb => cb.dataset.catKey = catKey);
   });
 }
 
 function populatePluginStrategies() {
-  strategies.forEach(s => {
-    document.querySelectorAll('.plugin-strat-grid').forEach(grid => {
-      const pluginId = grid.dataset.pluginId;
-      const label = document.createElement('label');
-      label.style.display = 'flex';
-      label.style.alignItems = 'center';
-      label.style.gap = '6px';
-      label.style.fontSize = '11px';
-      label.style.padding = '4px 6px';
-      label.style.borderRadius = '3px';
-      label.style.cursor = 'pointer';
-      label.style.userSelect = 'none';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.value = s.id;
-      input.className = 'plugin-opt-strategy';
-      input.dataset.pluginId = pluginId;
-      input.onchange = () => savePluginCustomization(pluginId);
-      label.appendChild(input);
-      const span = document.createElement('span');
-      span.textContent = s.id;
-      label.appendChild(span);
-      grid.appendChild(label);
-    });
+  document.querySelectorAll('.plugin-strat-grid').forEach(grid => {
+    const pluginId = grid.dataset.pluginId;
+    const scope = `plugin:${pluginId}`;
+    grid.innerHTML = strategies
+      .map(s => stratRowHTML(s, scope, 'plugin-opt-strategy',
+                             `savePluginCustomization('${esc(pluginId)}')`))
+      .join('');
+    grid.querySelectorAll('.plugin-opt-strategy').forEach(cb => cb.dataset.pluginId = pluginId);
   });
 }
 
@@ -1863,7 +1976,8 @@ function savePluginCustomization(pluginId) {
   const maxChars = customize.querySelector('.plugin-opt-max_chars').value;
   const objective = customize.querySelector('.plugin-opt-objective').value;
   const instructions = customize.querySelector('.plugin-opt-instructions').value;
-  const selectedStrategies = [...customize.querySelectorAll('.plugin-opt-strategy:checked')].map(cb => cb.value);
+  const selectedStrategies = [...customize.querySelectorAll('.plugin-opt-strategy:checked')]
+    .map(cb => strategyEntry(`plugin:${cb.dataset.pluginId}`, cb.value));
 
   if (numTests) opts.num_tests = parseInt(numTests);
   else delete opts.num_tests;
@@ -2014,7 +2128,8 @@ function saveCategoryCustomization(catKey) {
   const language = catCustomize.querySelector('.cat-opt-language').value;
   const maxChars = catCustomize.querySelector('.cat-opt-max_chars').value;
   const instructions = catCustomize.querySelector('.cat-opt-instructions').value;
-  const selectedStrategies = [...catCustomize.querySelectorAll('.cat-opt-strategy:checked')].map(cb => cb.value);
+  const selectedStrategies = [...catCustomize.querySelectorAll('.cat-opt-strategy:checked')]
+    .map(cb => strategyEntry(`cat:${cb.dataset.catKey}`, cb.value));
 
   if (numTests) categoryCustomizations[catKey].num_tests = parseInt(numTests);
   else delete categoryCustomizations[catKey].num_tests;

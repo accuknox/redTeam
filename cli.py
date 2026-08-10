@@ -160,20 +160,34 @@ def _list_plugins() -> None:
 
 
 def _list_strategies() -> None:
-    no_llm = ["base64", "rot13", "leetspeak",
-               "fiction", "citation", "refusal-suppression", "manyshot", "crescendo"]
-    llm_based = ["jailbreak", "multilingual"]
+    """Grouped by cost, read off the registry so the list cannot go stale."""
+    buckets: dict[str, list] = {"no_llm": [], "llm": [], "interactive": []}
+    for sid, cls in _STRATEGY_REGISTRY.items():
+        key = ("interactive" if getattr(cls, "interactive", False)
+               else "llm" if getattr(cls, "uses_llm", False) else "no_llm")
+        buckets[key].append((sid, getattr(cls, "description", "")))
+
+    headings = [
+        ("no_llm",      "No-LLM  (fast, no extra API calls)"),
+        ("llm",         "LLM-based  (one generation call per prompt)"),
+        ("interactive", "Adaptive  (multi-turn; several calls per case)"),
+    ]
 
     print("knox-rt — available strategies\n" + "=" * 50)
-    print("\nNo-LLM  (fast, no extra API calls):")
-    for sid in no_llm:
-        print(f"  - {sid}")
-    print("\nLLM-based  (use the generation model, extra API calls):")
-    for sid in llm_based:
-        print(f"  - {sid}")
+    for key, heading in headings:
+        if not buckets[key]:
+            continue
+        print(f"\n{heading}:")
+        for sid, desc in buckets[key]:
+            print(f"  - {sid}")
+            if desc:
+                print(f"      {desc}")
+
     print("\nWith config options (use config.yaml for full control):")
-    print("  multilingual  — language: zh | es | fr | de | ar | ru | ja | pt | ko | hi")
-    print("  manyshot      — num_shots: N  (default: 8)")
+    print("  multilingual             — language: zh | es | fr | de | ar | ru | ja | pt | ko | hi")
+    print("  manyshot                 — num_shots: N  (default: 8)")
+    print("  conversational-jailbreak — max_turns: N  (default: 4)")
+    print("  crescendo                — max_turns: N (default: 5), max_backtracks: N (default: 3)")
 
 
 # --------------------------------------------------------------------------- #
@@ -503,6 +517,21 @@ def main(argv: list[str] | None = None) -> None:
         final_batches.append((plugin, base_cases, final_cases))
         all_save_cases.extend(final_cases)
 
+    # Interactive strategies need the target, so they are driven at evaluation
+    # time. Collect the configured instances (global + per-plugin) by id.
+    interactive_strategies: dict[str, object] = {
+        s.id: s
+        for s in [
+            *cfg.strategies,
+            *(s for p in cfg.plugins for s in (getattr(p, "strategies", None) or [])),
+        ]
+        if s.interactive
+    }
+    if interactive_strategies:
+        for sid, s in interactive_strategies.items():
+            print(f"Adaptive strategy '{sid}' enabled "
+                  f"(up to {getattr(s, 'max_turns', '?')} turns per case)")
+
     # --- save prompts file (before hitting the target) -----------------------
     if save_prompts_path:
         save_path = _save_prompts(
@@ -531,13 +560,6 @@ def main(argv: list[str] | None = None) -> None:
             sev_tag   = f"[{case.severity.upper()}] " if case.severity else ""
             strat_tag = f"[{strategy}] " if strategy else ""
 
-            t0 = time.perf_counter()
-            response = await loop.run_in_executor(None, tgt.generate, case.prompt)
-            t_target = time.perf_counter() - t0
-
-            if cfg.delay_ms:
-                await asyncio.sleep(cfg.delay_ms / 1000)
-
             obj = case.metadata.get("objective")
             if obj:
                 from detectors.custom import CustomDetector
@@ -545,12 +567,60 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 detector = get_detector(case.detector_id, cfg.grading)
 
-            t1 = time.perf_counter()
-            result = await loop.run_in_executor(
-                None,
-                lambda: detector.grade(attack=case.prompt, response=response, purpose=cfg.purpose),
-            )
-            t_grade = time.perf_counter() - t1
+            interactive = interactive_strategies.get(case.metadata.get("strategy") or "")
+            turns, transcript, backtracks = 1, None, None
+
+            if interactive is not None:
+                # Multi-turn: the strategy owns the loop, grading each turn to
+                # decide whether to refine. One executor slot for the whole
+                # conversation; concurrency still comes from the semaphore.
+                t0 = time.perf_counter()
+                convo = await loop.run_in_executor(
+                    None,
+                    lambda: interactive.run_conversation(
+                        seed_prompt=case.prompt,
+                        target=tgt,
+                        grade=lambda a, r: detector.grade(
+                            attack=a, response=r, purpose=cfg.purpose),
+                        generator=cfg.generation,
+                        purpose=cfg.purpose,
+                        objective=case.metadata.get("objective") or "",
+                        # Already resolved (per-plugin over global) when the
+                        # plugin built the case, so refined turns inherit the
+                        # same contract the seed prompt was generated under.
+                        language=case.metadata.get("language") or "",
+                        max_chars=case.metadata.get("max_chars") or 0,
+                        instructions=case.metadata.get("generation_instructions") or "",
+                        examples=case.metadata.get("examples") or "",
+                    ),
+                )
+                elapsed = time.perf_counter() - t0
+                attack_prompt = convo["attack"]
+                response = convo["response"]
+                result = convo["result"]
+                turns = convo["turns"]
+                transcript = convo["transcript"]
+                backtracks = convo.get("backtracks")
+                # Target and grading interleave inside the loop, so split the
+                # measured time evenly rather than reporting a fake breakdown.
+                t_target = t_grade = elapsed / 2
+            else:
+                attack_prompt = case.prompt
+
+                t0 = time.perf_counter()
+                response = await loop.run_in_executor(None, tgt.generate, case.prompt)
+                t_target = time.perf_counter() - t0
+
+                if cfg.delay_ms:
+                    await asyncio.sleep(cfg.delay_ms / 1000)
+
+                t1 = time.perf_counter()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: detector.grade(
+                        attack=case.prompt, response=response, purpose=cfg.purpose),
+                )
+                t_grade = time.perf_counter() - t1
 
             cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
             objective = case.metadata.get("objective") or None
@@ -571,8 +641,14 @@ def main(argv: list[str] | None = None) -> None:
                 "controls": case.controls or None,
                 "severity": case.severity or None,
                 "strategy": strategy,
-                "attack": case.prompt,
-                "original_prompt": case.metadata.get("original_prompt"),
+                # For a multi-turn case this is the attack that actually landed,
+                # which may be several refinements past the seed prompt.
+                "attack": attack_prompt,
+                "original_prompt": case.metadata.get("original_prompt") or (
+                    case.prompt if interactive is not None else None),
+                "turns": turns,
+                "transcript": transcript,
+                "backtracks": backtracks,
                 "response": response,
                 "passed": result.passed,
                 "score": result.score,

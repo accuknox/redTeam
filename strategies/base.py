@@ -29,9 +29,18 @@ class Strategy(ABC):
 
     id: str = ""
 
+    #: One-line summary of what this strategy does and what it probes for.
+    #: Surfaced in the UI next to the strategy's checkbox.
+    description: str = ""
+
     #: True when apply() calls the generation model, so callers know this
     #: strategy costs one API call per prompt and is worth parallelising.
     uses_llm: bool = False
+
+    #: True when the strategy needs the target's responses to decide its next
+    #: move. apply() cannot express that, so the runner drives these at
+    #: evaluation time via run_conversation() instead of the strategy phase.
+    interactive: bool = False
 
     @abstractmethod
     def apply(

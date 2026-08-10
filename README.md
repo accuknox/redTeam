@@ -181,22 +181,30 @@ Select **attack transformation techniques** applied after plugin generation.
 
 Each selected strategy creates additional test cases. Total cases = `tests × plugins × (1 + strategies)`.
 
-**Text-based strategies** (no extra API calls):
+**Static strategies** (no extra API calls):
 | Strategy | What it does | Best for |
 |----------|-------------|----------|
 | `base64` | Encodes the attack in Base64, asks to decode | Bypassing keyword filters |
 | `rot13` | ROT13-encodes the attack | Character-substitution filters |
+| `leetspeak` | Rewrites in leet speak (a→4, e→3) | Keyword filters |
 | `fiction` | Wraps attack in a creative writing prompt | Bypassing intent detection |
 | `citation` | Frames as academic research | Authority-based defenses |
-| `manyshot` | Prefixes with fake compliant Q&A pairs | Few-shot prompt injection |
-| `crescendo` | Frames as natural next step in conversation | Context-aware defenses |
 | `refusal-suppression` | Prepends "don't refuse" instructions | Refusal mechanisms |
 
-**LLM-based strategies** (incur extra API calls):
+**LLM strategies** (one generation call per case):
 | Strategy | What it does | Best for |
 |----------|-------------|----------|
-| `jailbreak` | Uses generator to rewrite attack persuasively | Sophisticated defenses |
+| `jailbreak` | Rewrites the attack once to be more persuasive | Sophisticated defenses |
 | `multilingual` | Translates to another language | Language-specific filters |
+| `manyshot` | Prefixes with N fabricated on-topic compliant exchanges | In-context / many-shot jailbreaking |
+
+**Adaptive strategies** (multi-turn conversation — several calls per case; ⚙ sets turns):
+| Strategy | What it does | Best for |
+|----------|-------------|----------|
+| `crescendo` | Opens benign, escalates one step per turn on the target's own answers, backtracks on refusal | Gradual-escalation defenses |
+| `conversational-jailbreak` | Reads each reply and refines a stronger full attack until it succeeds | Adaptive / iterative robustness |
+
+> Adaptive strategies stop the moment the target breaks, and a case is marked **vulnerable** only when the grader judges a break. Use a grader distinct from the target — see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
 
 ### 7️⃣ **Run Scan** (Main Panel)
 
@@ -364,10 +372,11 @@ parsing, and dedup are identical across all plugins.
 │   └── __init__.py          #   plugin registry, CATEGORIES, get_plugin/resolve_plugin_ids
 │
 ├── strategies/              # ATTACK TRANSFORMS — applied after plugin generation
-│   ├── base.py              #   Strategy (ABC), apply_to_cases()
+│   ├── base.py              #   Strategy (ABC): uses_llm / interactive flags, apply_to_cases()
 │   ├── encoding.py          #   base64, rot13, leetspeak
-│   ├── wrapping.py          #   fiction, citation, refusal-suppression, manyshot, crescendo
-│   ├── llm.py               #   jailbreak (PAIR-inspired), multilingual
+│   ├── wrapping.py          #   fiction, citation, refusal-suppression, manyshot (LLM)
+│   ├── llm.py               #   jailbreak (single-shot), multilingual
+│   ├── conversational.py    #   crescendo, conversational-jailbreak (adaptive multi-turn)
 │   └── __init__.py          #   strategy registry, get_strategy, apply_strategies
 │
 └── detectors/               # GRADING — judging the target's response (mirrors plugins/)
@@ -431,12 +440,20 @@ Strategies transform generated prompts to probe whether defences can be bypassed
 by framing or obfuscation. They are applied **after** plugin generation and produce
 additional `TestCase`s alongside the originals (baseline is always graded too).
 
-**Prompt count formula:** `num_tests × num_plugins × (1 + num_strategies)`
+**Case count formula:** `num_tests × num_plugins × (1 + num_strategies)` — a
+multi-turn conversation is still one case, so adaptive strategies add cases like
+any other; they multiply *API calls*, not case count.
 
 Each transformed case carries `metadata["strategy"]` and `metadata["original_prompt"]`
-for traceability.
+for traceability. Adaptive strategies also record `turns` and a per-turn
+`transcript` (and `backtracks` for crescendo).
 
-**No-LLM strategies** (pure text transforms, no extra API calls):
+Strategies come in three tiers. `Strategy.uses_llm` marks the LLM ones;
+`Strategy.interactive` marks the adaptive ones, which the runner drives at
+evaluation time (they need the target's replies) rather than in the pre-target
+strategy phase.
+
+**Static strategies** (`encoding.py`, `wrapping.py` — pure text transforms, no extra calls):
 
 | Strategy | What it does |
 |---|---|
@@ -446,15 +463,21 @@ for traceability.
 | `fiction` | Wraps the attack in a novel-writing / creative request |
 | `citation` | Frames the attack as an academic research inquiry |
 | `refusal-suppression` | Prepends "don't refuse or add caveats" instructions |
-| `manyshot` | Prefixes with many fake compliant Q&A pairs |
-| `crescendo` | Frames as the natural next step in an ongoing conversation |
 
-**LLM-based strategies** (use the generation model, incur extra API calls):
+**LLM strategies** (`llm.py`, `wrapping.py` — one generation call per case):
 
 | Strategy | What it does |
 |---|---|
-| `jailbreak` | PAIR-inspired: uses the generator to rewrite the attack to be more persuasive |
+| `jailbreak` | Single-shot: uses the generator to rewrite the attack once to be more persuasive (no target feedback) |
 | `multilingual` | Translates the attack to another language (probes language-specific filters) |
+| `manyshot` | Generates N on-topic exchanges where the assistant complies, then appends the real attack (many-shot jailbreaking) |
+
+**Adaptive strategies** (`conversational.py` — live multi-turn, several calls per case):
+
+| Strategy | What it does |
+|---|---|
+| `crescendo` | Microsoft Crescendo: benign opener, escalate one step per turn on the target's own answers, backtrack on refusal |
+| `conversational-jailbreak` | PAIR: read each reply, refine a stronger full attack, repeat until it breaks or turns run out |
 
 ### 4. `detectors/` — grading
 
@@ -747,15 +770,22 @@ plugins:
 
 # ── Attack strategies ─────────────────────────────────────────────────────────
 strategies:
-  - base64
+  - base64                            # static — no extra calls
   - fiction
-  - jailbreak
+  - jailbreak                         # LLM — one call per case
   - id: multilingual
     config:
       language: zh    # zh | es | fr | de | ar | ru | ja | pt | ko | hi
   - id: manyshot
     config:
-      num_shots: 15
+      num_shots: 8                    # default 8; on-topic compliant exchanges
+  - id: crescendo                     # adaptive multi-turn — several calls per case
+    config:
+      max_turns: 5
+      max_backtracks: 3
+  - id: conversational-jailbreak      # adaptive multi-turn
+    config:
+      max_turns: 4
 ```
 
 ### Multi-target testing (A/B comparison)
