@@ -205,6 +205,7 @@ button{cursor:pointer}
 .reason-lbl{display:inline-block;font-size:9px;font-weight:700;letter-spacing:0.4px;padding:1px 6px;border-radius:4px;margin-right:6px;vertical-align:middle}
 .why-vuln .reason-lbl{background:var(--accent-dim);color:#FCA5A5}
 .why-safe .reason-lbl{background:var(--green-dim);color:#86EFAC}
+.reconf-tag{margin-top:4px;font-size:9px;font-weight:600;letter-spacing:0.3px;color:#86EFAC}
 .bar-wrap{background:var(--surface2);border-radius:3px;height:6px;min-width:80px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
 .bar-fill.safe{background:var(--green)}
@@ -1561,34 +1562,48 @@ function renderResults(data) {
         <thead><tr><th>Plugin</th><th>Input Prompt</th><th>Output Response</th><th>Verdict</th></tr></thead>
         <tbody>
           ${(results || []).map(r => {
+            // transcript is present only for interactive (multi-turn) strategies;
+            // its length is the turns actually run. 0 = a single-shot strategy.
             const turns = (r.transcript || []).length;
+            const isConvo = turns >= 1;
             // Strategy that produced this prompt ('baseline' = the plugin's own
             // prompt, no transform), plus the objective the attack pursues.
             const strat = `<span class="strat-badge-sm">${esc(r.strategy || 'baseline')}</span>`;
             const obj = r.objective ? `<div class="obj-txt" title="attack objective">🎯 ${esc(r.objective)}</div>` : '';
-            // Multi-turn: attack/response hold only the LAST turn, so the row
-            // gets a full-width detail row carrying the whole conversation.
+            // Interactive cases always show their turn count so a turn-1 break of
+            // a multi-turn strategy isn't mistaken for a single-shot case.
+            const turnTag = isConvo
+              ? `<div class="turn-tag">${turns === 1 ? 'broke on turn 1' : turns + ' turns'}</div>` : '';
+            const turnHdr = turns > 1
+              ? `<div class="turn-h">final turn ${turns} of ${turns}</div>`
+              : (turns === 1 ? `<div class="turn-h">turn 1 of 1</div>` : '');
             const main = `<tr>
               <td style="font-size:11px;font-family:var(--mono)">${esc(r.plugin_id || '—')}${
-                turns > 1 ? `<div class="turn-tag">${turns} turns</div>` : ''}<div style="margin-top:4px">${strat}</div>${obj}</td>
-              <td class="io-cell">${turns > 1
-                ? `<div class="turn-h">final turn ${turns} of ${turns}</div>` : ''}${esc(r.attack || '')}</td>
+                turnTag}<div style="margin-top:4px">${strat}</div>${obj}</td>
+              <td class="io-cell">${turnHdr}${esc(r.attack || '')}</td>
               <td class="io-cell">${r.error ? `<span class="pill-err-txt">⚠ ${esc(r.error)}</span>` : esc(r.response || '')}</td>
               <td>${
                 r.passed === null || r.error
                   ? '<span class="pill pill-err">ERROR</span>'
                   : `<span class="pill ${r.passed ? 'pill-safe' : 'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span>`
+              }${
+                // Confirmed = break reproduced on a clean replay; a discounted
+                // break (reconfirmed:false) shows as RESISTED already.
+                r.reconfirmed === true ? '<div class="reconf-tag" title="Break reproduced on a fresh-session replay">✓ confirmed</div>' : ''
               }</td>
             </tr>`;
             // Grader's reason for the verdict — full width so it isn't cramped
             // by the narrow verdict column.
             const why = r.reason ? `<tr class="reason-row ${r.passed ? 'why-safe' : 'why-vuln'}"><td colspan="4">
               <span class="reason-lbl">WHY ${r.passed ? 'RESISTED' : 'VULNERABLE'}</span> ${esc(r.reason)}</td></tr>` : '';
+            // Multi-turn cases get the full turn-by-turn expander. A single-turn
+            // case is already fully shown in the main row (that one turn), so it
+            // needs only the "broke on turn 1" tag above — no redundant expander.
             const detail = turns < 2 ? '' : `<tr class="turns-row"><td colspan="4">
               <details class="turns">
                 <summary>Show all ${turns} turns of the conversation</summary>
                 ${r.transcript.map(t => `<div class="turn">
-                  <div class="turn-h">Turn ${t.turn} — ${t.passed ? 'resisted' : 'COMPLIED'}</div>
+                  <div class="turn-h">Turn ${t.turn} — ${t.passed ? 'resisted' : 'COMPLIED'}${t.reconfirmed === false ? ' (break discounted on replay)' : ''}</div>
                   <div class="turn-a"><span class="turn-lbl">ATTACK</span>${esc(t.attack || '')}</div>
                   <div class="turn-r"><span class="turn-lbl">REPLY</span>${esc(t.response || '')}</div>
                 </div>`).join('')}

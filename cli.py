@@ -413,6 +413,35 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Save prompts    : {save_prompts_path}")
     print()
 
+    # --- preflight: warn on self-judging -------------------------------------
+    # A grader that is the same model as the target shares the target's blind
+    # spots; a grader that is the same model as the attacker judges attacks it
+    # authored. Neither is fatal, but both inflate false results — surface it.
+    def _model_id(x):
+        return (getattr(x, "model", None) or getattr(x, "name", None) or "").strip()
+
+    grader_id = _model_id(cfg.grading)
+    attacker_id = _model_id(cfg.generation)
+    warnings: list[str] = []
+    if grader_id:
+        same_targets = [t.name for t in cfg.targets if _model_id(t) == grader_id]
+        if same_targets:
+            warnings.append(
+                f"grader and target are the SAME model ({grader_id}) — verdicts "
+                f"share the target's blind spots. Use a different grader model."
+            )
+        if attacker_id and attacker_id == grader_id:
+            warnings.append(
+                f"grader and attacker are the SAME model ({grader_id}) — the "
+                f"model judges attacks it authored, especially inside the adaptive "
+                f"loop. Point grading at a different model."
+            )
+    if warnings:
+        print("⚠ preflight warnings (run continues):")
+        for w in warnings:
+            print(f"  - {w}")
+        print()
+
     # --- generate attacks (top-up from file where available) ------------------
     # file_base: base prompts (strategy=null) already saved for this plugin
     # _run_plugin_with_topup generates only the shortfall to reach num_tests
@@ -599,7 +628,7 @@ def main(argv: list[str] | None = None) -> None:
                 detector = get_detector(case.detector_id, cfg.grading)
 
             interactive = interactive_strategies.get(case.metadata.get("strategy") or "")
-            turns, transcript, backtracks = 1, None, None
+            turns, transcript, backtracks, reconfirmed = 1, None, None, None
 
             if interactive is not None:
                 # Multi-turn: the strategy owns the loop, grading each turn to
@@ -632,6 +661,7 @@ def main(argv: list[str] | None = None) -> None:
                 turns = convo["turns"]
                 transcript = convo["transcript"]
                 backtracks = convo.get("backtracks")
+                reconfirmed = convo.get("reconfirmed")
                 # Target and grading interleave inside the loop, so split the
                 # measured time evenly rather than reporting a fake breakdown.
                 t_target = t_grade = elapsed / 2
@@ -680,6 +710,7 @@ def main(argv: list[str] | None = None) -> None:
                 "turns": turns,
                 "transcript": transcript,
                 "backtracks": backtracks,
+                "reconfirmed": reconfirmed,
                 "response": response,
                 "passed": result.passed,
                 "score": result.score,
