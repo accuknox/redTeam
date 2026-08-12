@@ -151,25 +151,28 @@ class MistralJudge(Judge):
 class LocalJudge(Judge):
     """LLM-as-a-judge via any OpenAI-compatible /v1/chat/completions endpoint.
 
-    Designed for self-hosted gated evaluators (e.g. `redteam-evaluator-gated`)
-    that receive a conversation and return a JSON verdict.
+    Two grading modes, selected by ``gated``:
 
-    Two call modes:
-      * `evaluate(prompt)`          — sends a single user message (standard
-                                      rubric-based path, for compatibility).
-      * `evaluate_messages(msgs)`   — sends the messages list as-is. When
-                                      `LLMDetector` detects this method it skips
-                                      `build_rubric()` and passes the raw
-                                      [user=attack, assistant=response] pair
-                                      directly to the evaluator.
+      * **rubric** (``gated=False``, the default) — for a *general* model
+        (OpenRouter, vLLM, Ollama, …). `LLMDetector` builds the full rubric
+        prompt (which instructs the model to emit ``{passed, score, reason}``)
+        and sends it as one message. Use this for any ordinary chat model.
+
+      * **gated** (``gated=True``) — for a *purpose-built* gated evaluator
+        (e.g. ``redteam-evaluator-gated``) that already knows the protocol: the
+        raw [user=attack, assistant=response] pair is sent with no rubric and
+        the model returns ``{verdict, reason}`` directly.
+
+    A general model in gated mode returns prose, not a verdict, which parses as
+    "unparseable" and is scored as a break — so the default is rubric.
 
     Config example::
 
         grading:
-          backend: local
-          url: http://100.92.159.5:47923
-          model: redteam-evaluator-gated
-          # api_key: sk-...   # omit if the endpoint has no auth
+          backend: custom
+          base_url: https://openrouter.ai/api
+          model: deepseek/deepseek-chat
+          # gated: true        # only for a real gated evaluator endpoint
     """
 
     def __init__(
@@ -181,15 +184,17 @@ class LocalJudge(Judge):
         temperature: float = 0.0,
         max_tokens: int = 1024,
         timeout: int = 30,
+        gated: bool = False,
         **params: Any,
     ) -> None:
         self.name = model
-        self.base_url = base_url.rstrip("/").removesuffix("/v1")
+        self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.gated = gated
         self.params = params
 
     def _call(self, messages: list[dict]) -> str:
@@ -206,14 +211,21 @@ class LocalJudge(Judge):
             "max_tokens": self.max_tokens,
             **self.params,
         }
+        # Accept bare host, /v1 root, or full endpoint without doubling the path.
+        b = self.base_url
+        url = (b if b.endswith("/chat/completions")
+               else f"{b}/chat/completions" if b.endswith("/v1")
+               else f"{b}/v1/chat/completions")
         resp = requests.post(
-            f"{self.base_url}/v1/chat/completions",
+            url,
             json=payload,
             headers=headers,
             timeout=self.timeout,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        # content is null when the model emits only reasoning / a tool call, hits
+        # a filter, or refuses — coerce so callers always get a string.
+        return resp.json()["choices"][0]["message"].get("content") or ""
 
     def evaluate(self, prompt: str) -> str:
         return self._call([{"role": "user", "content": prompt}])

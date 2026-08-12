@@ -211,7 +211,8 @@ class RestProvider(Provider):
                     current = current[idx]
                 else:
                     current = current[part]
-            return str(current)
+            # null content (reasoning-only / filtered / refusal) → "" not "None"
+            return "" if current is None else str(current)
         except (KeyError, IndexError, ValueError, TypeError) as e:
             # Show what we found vs what was expected
             raise ValueError(
@@ -246,7 +247,17 @@ class RestProvider(Provider):
                 **{k: v for k, v in self.params.items()
                    if k not in ("model", "messages")},
             }
-            url = f"{self.base_url}/v1/chat/completions"
+            # Accept any common form of the base URL rather than blindly
+            # appending — users paste the bare host, the /v1 root, or the full
+            # endpoint. Appending unconditionally doubled the path
+            # (…/v1/chat/completions/v1/chat/completions → 404).
+            b = self.base_url
+            if b.endswith("/chat/completions"):
+                url = b
+            elif b.endswith("/v1"):
+                url = f"{b}/chat/completions"
+            else:
+                url = f"{b}/v1/chat/completions"
 
         http_fn = getattr(requests, self.method)
         resp = http_fn(url, json=body, headers=headers, timeout=self.timeout)

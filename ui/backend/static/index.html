@@ -143,6 +143,10 @@ button{cursor:pointer}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tab-panel{display:none;flex:1;overflow-y:auto;padding:16px}
 .tab-panel.active{display:block}
+/* Run panel is a flex column ONLY while active. Previously this lived in an
+   inline style, which beat `.tab-panel{display:none}` and kept the Run panel
+   visible on every tab — so results rendered stacked below it. */
+#tab-run.active{display:flex;flex-direction:column;gap:12px}
 
 /* ── Config preview ──────────────────────────────────────────────────────── */
 #config-json{width:100%;height:calc(100vh - 160px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-family:var(--mono);font-size:12px;color:var(--text);resize:none;outline:none;line-height:1.6}
@@ -200,6 +204,8 @@ button{cursor:pointer}
 .pill{display:inline-block;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:600}
 .pill-vuln{background:var(--accent-dim);color:#FCA5A5}
 .pill-safe{background:var(--green-dim);color:#86EFAC}
+.pill-err{background:var(--surface2);color:#FBBF24}
+.pill-err-txt{color:#FBBF24;font-size:11px}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text-muted)}
 .empty-state .icon{font-size:32px;margin-bottom:10px;opacity:.4}
 .empty-state p{font-size:13px}
@@ -588,6 +594,10 @@ button{cursor:pointer}
         <div class="field" id="grade-url-field" style="display:none">
           <label>Base URL (for local/OpenAI-compatible)</label>
           <input id="grade-url" type="text" placeholder="http://localhost:8000/v1 or http://0.0.0.0:47923">
+          <label style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;font-size:11px;color:var(--text-muted);cursor:pointer">
+            <input type="checkbox" id="grade-gated" onchange="updateConfig()" style="width:14px;height:14px;flex:none;margin-top:1px">
+            <span>Gated evaluator — a purpose-built model that returns a verdict directly. Leave off for general models (DeepSeek, GPT, Mistral, …).</span>
+          </label>
         </div>
       </div>
     </div>
@@ -661,7 +671,7 @@ button{cursor:pointer}
     </div>
 
     <!-- Run tab -->
-    <div class="tab-panel active" id="tab-run" style="display:flex;flex-direction:column;gap:12px">
+    <div class="tab-panel active" id="tab-run">
       <div class="run-bar">
         <button class="run-btn" id="main-run-btn" onclick="startScan()">▶ Run Scan</button>
         <button class="stop-btn" id="stop-btn" onclick="stopScan()" style="display:none">■ Stop</button>
@@ -1235,6 +1245,11 @@ function buildConfig() {
   if (grk) grading.api_key = grk;
   const gru = document.getElementById('grade-url').value.trim();
   if (gru && (gradeBackend === 'custom' || gradeBackend === 'local')) grading.base_url = gru;
+  // Only meaningful for the OpenAI-compatible grader; omit unless checked so the
+  // default (rubric mode, for general models) stays clean in the config.
+  if (document.getElementById('grade-gated').checked && (gradeBackend === 'custom' || gradeBackend === 'local')) {
+    grading.gated = true;
+  }
 
   const targetType = document.getElementById('target-type').value;
   const target = {
@@ -1508,6 +1523,7 @@ function renderResults(data) {
       <div class="stat-card"><div class="num">${s.total||0}</div><div class="lbl">Total cases</div></div>
       <div class="stat-card danger"><div class="num">${s.vulnerable||0}</div><div class="lbl">Vulnerable</div></div>
       <div class="stat-card safe"><div class="num">${s.resisted||0}</div><div class="lbl">Resisted</div></div>
+      ${s.errored ? `<div class="stat-card"><div class="num" style="color:#FBBF24">${s.errored}</div><div class="lbl">Errored</div></div>` : ''}
       <div class="stat-card"><div class="num">${s.total ? Math.round(s.pass_rate*100) : 0}%</div><div class="lbl">Pass rate</div></div>
     </div>
     
@@ -1546,8 +1562,12 @@ function renderResults(data) {
                 turns > 1 ? `<div class="turn-tag">${turns} turns</div>` : ''}</td>
               <td class="io-cell">${turns > 1
                 ? `<div class="turn-h">final turn ${turns} of ${turns}</div>` : ''}${esc(r.attack || '')}</td>
-              <td class="io-cell">${esc(r.response || '')}</td>
-              <td><span class="pill ${r.passed?'pill-safe':'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span></td>
+              <td class="io-cell">${r.error ? `<span class="pill-err-txt">⚠ ${esc(r.error)}</span>` : esc(r.response || '')}</td>
+              <td>${
+                r.passed === null || r.error
+                  ? '<span class="pill pill-err">ERROR</span>'
+                  : `<span class="pill ${r.passed ? 'pill-safe' : 'pill-vuln'}">${r.passed ? 'RESISTED' : 'VULNERABLE'}</span>`
+              }</td>
             </tr>`;
             if (turns < 2) return main;
             return main + `<tr class="turns-row"><td colspan="4">
@@ -1616,19 +1636,16 @@ function onGradeBackendChange() {
   document.getElementById('grade-model').placeholder = models[v] || '';
 }
 
-function onTargetTypeChange() {
+// Field visibility + placeholder for the current target type. Safe to re-run —
+// it never clears user input, so it can sync after the browser restores form
+// state on reload (which doesn't fire `change`, leaving the placeholder stale).
+function syncTargetTypeUI() {
   const v = document.getElementById("target-type").value;
 
-  // Show/hide fields based on target type
   document.getElementById("target-name-field").style.display = (v === "openai" || v === "anthropic" || v === "mistral") ? "" : "none";
   document.getElementById("target-base-url-field").style.display = v === "custom" ? "" : "none";
   document.getElementById("target-model-field").style.display = v === "custom" ? "" : "none";
   document.getElementById("rest-advanced").style.display = v === "rest" ? "" : "none";
-
-  // Clear old values when switching types
-  document.getElementById("target-name").value = "";
-  document.getElementById("target-base-url").value = "";
-  document.getElementById("target-model").value = "";
 
   const ph = {
     openai: "gpt-4o",
@@ -1638,6 +1655,15 @@ function onTargetTypeChange() {
     function: "my_module#invoke"
   };
   document.getElementById("target-name").placeholder = ph[v] || "";
+}
+
+// Fired only by the dropdown itself: sync the UI, then clear the now-irrelevant
+// fields from the previous type.
+function onTargetTypeChange() {
+  document.getElementById("target-name").value = "";
+  document.getElementById("target-base-url").value = "";
+  document.getElementById("target-model").value = "";
+  syncTargetTypeUI();
 }
 
 function toggleTheme() {
@@ -1655,7 +1681,12 @@ init();
 updateConfig();
 onGenBackendChange();
 onGradeBackendChange();
-onTargetTypeChange();
+syncTargetTypeUI();
+
+// The browser restores <select> values on reload/back-forward AFTER inline
+// scripts run, without firing `change` — so re-sync the placeholders once that
+// restoration has happened. Sync only (never clears restored input).
+window.addEventListener('pageshow', syncTargetTypeUI);
 
 const REST_TEMPLATES = {
   mistral: {
