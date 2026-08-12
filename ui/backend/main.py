@@ -13,11 +13,16 @@ import asyncio
 import json
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# The OS temp dir — /tmp on Linux/macOS, %TEMP% on Windows. Hardcoding "/tmp"
+# breaks scans on Windows, where it does not exist.
+_TMP = Path(tempfile.gettempdir())
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -248,10 +253,10 @@ async def start_scan(req: ScanRequest):
         "completed_cases": 0,
     }
 
-    config_path = Path(f"/tmp/knox_rt_run_{run_id}.json")
+    config_path = _TMP / f"knox_rt_run_{run_id}.json"
     config_path.write_text(json.dumps(req.config, indent=2))
 
-    results_path = Path(f"/tmp/knox_rt_results_{run_id}.json")
+    results_path = _TMP / f"knox_rt_results_{run_id}.json"
 
     async def _run():
         try:
