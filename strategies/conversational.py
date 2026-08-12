@@ -35,6 +35,25 @@ def _looks_like_refusal(response: str) -> bool:
     return any(m in head for m in _REFUSAL_MARKERS)
 
 
+def _with_retry(fn, *args, _tries: int = 3, _base: float = 1.0, **kwargs):
+    """Call `fn`, retrying transient failures with backoff.
+
+    A multi-turn case makes ~3x the API calls of a static one, so a single
+    transient error (rate limit, 5xx, dropped connection) used to throw away the
+    whole conversation. Retrying the individual call keeps the case alive.
+    """
+    import time
+    last: Exception | None = None
+    for attempt in range(_tries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — deliberately broad; re-raised below
+            last = exc
+            if attempt < _tries - 1:
+                time.sleep(_base * (2 ** attempt))
+    raise last
+
+
 def _constraint_block(*, language, max_chars, instructions, examples) -> str:
     """Carry the generation-time customisation into every generated turn.
 
@@ -126,7 +145,7 @@ try a different framing, an indirect route, or a more plausible pretext.
         # Length is instructed, never enforced: cutting a prompt mid-sentence
         # can slice the payload out of the attack, which is worse than a prompt
         # that runs a little long.
-        return (generator.complete(meta) or "").strip()
+        return (_with_retry(generator.complete, meta) or "").strip()
 
     def run_conversation(
         self,
@@ -158,10 +177,10 @@ try a different framing, an indirect route, or a more plausible pretext.
 
         for turn in range(1, self.max_turns + 1):
             messages.append({"role": "user", "content": attack})
-            response = target.generate(messages)
+            response = _with_retry(target.generate, messages)
             messages.append({"role": "assistant", "content": response})
 
-            result = grade(attack, response)
+            result = _with_retry(grade, attack, response)
             transcript.append({
                 "turn": turn,
                 "attack": attack,
@@ -278,7 +297,7 @@ or more innocuous angle that avoids the refusal.
                          for m in messages) or "(no messages yet)"
 
     def _gen(self, template, generator, **kw) -> str:
-        return (generator.complete(template.format(**kw)) or "").strip()
+        return (_with_retry(generator.complete, template.format(**kw)) or "").strip()
 
     def run_conversation(
         self,
@@ -315,10 +334,10 @@ or more innocuous angle that avoids the refusal.
 
         for turn in range(1, self.max_turns + 1):
             messages.append({"role": "user", "content": attack})
-            response = target.generate(messages)
+            response = _with_retry(target.generate, messages)
             messages.append({"role": "assistant", "content": response})
 
-            result = grade(attack, response)
+            result = _with_retry(grade, attack, response)
             refused = _looks_like_refusal(response)
             transcript.append({
                 "turn": turn,

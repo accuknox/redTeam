@@ -171,9 +171,15 @@ class OpenAIGenerator(Generator):
         self.temperature = temperature
         self.system = system
         self.params = params
-        # Handle base_url: ensure /v1 suffix for OpenAI-compatible endpoints
-        if base_url and not base_url.endswith("/v1"):
-            base_url = base_url.rstrip("/") + "/v1"
+        # The OpenAI SDK wants the API *root* (…/v1) and appends /chat/completions
+        # itself. Normalize whatever the user pasted — bare host, /v1 root, or the
+        # full endpoint — down to that root, so a pasted full URL doesn't become
+        # …/chat/completions/v1/chat/completions (404).
+        if base_url:
+            b = base_url.rstrip("/")
+            if b.endswith("/chat/completions"):
+                b = b[: -len("/chat/completions")]
+            base_url = b if b.endswith("/v1") else b + "/v1"
         self._client = client or OpenAI(
             api_key=api_key or os.environ.get("OPENAI_API_KEY", "none"),
             base_url=base_url or None,

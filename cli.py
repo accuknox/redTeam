@@ -553,12 +553,43 @@ def main(argv: list[str] | None = None) -> None:
         spent in the target and time spent in the grader.
         """
         seq, plugin_id, case, tgt = unit
+        strategy  = case.metadata.get("strategy")
+        sev_tag   = f"[{case.severity.upper()}] " if case.severity else ""
+        strat_tag = f"[{strategy}] " if strategy else ""
 
         async with sem:
+            try:
+                return await _evaluate_case_inner(
+                    seq, plugin_id, case, tgt, strategy, sev_tag, strat_tag)
+            except Exception as exc:
+                # A dropped case used to vanish from the results entirely. Record
+                # it instead — a security tool must not silently hide failures.
+                cat_key, cat_label = category_for_plugin(case.plugin_id, case.detector_id)
+                err = f"{type(exc).__name__}: {exc}"
+                return {
+                    "seq": seq, "plugin_id": plugin_id, "target": tgt.name,
+                    "verdict": "ERROR     ", "sev_tag": sev_tag, "strat_tag": strat_tag,
+                    "passed": None, "severity": case.severity,
+                    "t_target": 0.0, "t_grade": 0.0, "error": err,
+                    "record": {
+                        "run_id": run_id, "timestamp": _now(), "target": tgt.name,
+                        "plugin_id": case.plugin_id, "detector_id": case.detector_id,
+                        "category": cat_key, "category_label": cat_label,
+                        "strategy": strategy, "attack": case.prompt,
+                        "severity": case.severity or None,
+                        "frameworks": case.frameworks or None,
+                        "controls": case.controls or None,
+                        "response": None, "passed": None, "score": None,
+                        "reason": None, "error": err,
+                        "purpose": cfg.purpose,
+                        "generation_model": cfg.generation.name,
+                        "grading_model": cfg.grading.name,
+                    },
+                }
+
+    async def _evaluate_case_inner(seq, plugin_id, case, tgt, strategy, sev_tag, strat_tag):
+        if True:
             loop = asyncio.get_event_loop()
-            strategy  = case.metadata.get("strategy")
-            sev_tag   = f"[{case.severity.upper()}] " if case.severity else ""
-            strat_tag = f"[{strategy}] " if strategy else ""
 
             obj = case.metadata.get("objective")
             if obj:
@@ -727,12 +758,18 @@ def main(argv: list[str] | None = None) -> None:
 
     # Display streams in completion order; records are re-sorted so the output
     # file does not depend on which case happened to finish first.
+    errored = 0
     for res in sorted(results, key=lambda r: r["seq"]):
         all_records.append(res["record"])
         total += 1
         by_plugin[res["plugin_id"]]["total"] += 1
         by_plugin[res["plugin_id"]].setdefault("severity", res["severity"] or "")
-        if not res["passed"]:
+        # passed is None for an errored case — neither a break nor a resist, so it
+        # must not be miscounted as vulnerable (not None == True).
+        if res["passed"] is None:
+            errored += 1
+            by_plugin[res["plugin_id"]]["errored"] = by_plugin[res["plugin_id"]].get("errored", 0) + 1
+        elif not res["passed"]:
             vulnerable += 1
             by_plugin[res["plugin_id"]]["vulnerable"] += 1
 
@@ -751,40 +788,49 @@ def main(argv: list[str] | None = None) -> None:
     print()
 
     # --- summary --------------------------------------------------------------
+    # An errored case is neither a pass nor a fail: keep it out of `vulnerable`
+    # and out of the pass-rate denominator (rate is over *decided* cases only).
+    def _pass_rate(counts: dict) -> float:
+        decided = counts["total"] - counts.get("errored", 0)
+        return round((decided - counts["vulnerable"]) / decided, 3) if decided else 0.0
+
     for counts in by_plugin.values():
-        t = counts["total"]
-        counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
+        counts["pass_rate"] = _pass_rate(counts)
 
     by_framework: dict[str, dict] = {}
     for rec in all_records:
         for fw in (rec.get("frameworks") or []):
-            bucket = by_framework.setdefault(fw, {"total": 0, "vulnerable": 0})
+            bucket = by_framework.setdefault(fw, {"total": 0, "vulnerable": 0, "errored": 0})
             bucket["total"] += 1
-            if not rec["passed"]:
+            if rec.get("passed") is None:
+                bucket["errored"] += 1
+            elif not rec["passed"]:
                 bucket["vulnerable"] += 1
     for counts in by_framework.values():
-        t = counts["total"]
-        counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
+        counts["pass_rate"] = _pass_rate(counts)
 
     # by_target — per-target pass/fail breakdown (most useful in multi-target runs)
     by_target: dict[str, dict] = {}
     for rec in all_records:
         tgt_name = rec.get("target", "default")
-        bucket = by_target.setdefault(tgt_name, {"total": 0, "vulnerable": 0})
+        bucket = by_target.setdefault(tgt_name, {"total": 0, "vulnerable": 0, "errored": 0})
         bucket["total"] += 1
-        if not rec["passed"]:
+        if rec.get("passed") is None:
+            bucket["errored"] += 1
+        elif not rec["passed"]:
             bucket["vulnerable"] += 1
     for counts in by_target.values():
-        t = counts["total"]
-        counts["pass_rate"] = round((t - counts["vulnerable"]) / t, 3) if t else 0.0
+        counts["pass_rate"] = _pass_rate(counts)
 
+    decided = total - errored
     summary = {
         "run_id":       run_id,
         "timestamp":    _now(),
         "total":        total,
         "vulnerable":   vulnerable,
-        "resisted":     total - vulnerable,
-        "pass_rate":    round((total - vulnerable) / total, 3) if total else 0.0,
+        "resisted":     decided - vulnerable,
+        "errored":      errored,
+        "pass_rate":    round((decided - vulnerable) / decided, 3) if decided else 0.0,
         "by_plugin":    by_plugin,
         "by_framework": by_framework or None,
         "by_target":    by_target if is_multi else None,
@@ -803,8 +849,10 @@ def main(argv: list[str] | None = None) -> None:
     # --- print summary --------------------------------------------------------
     print("=" * 50)
     print(f"Total      : {total}")
-    print(f"Vulnerable : {vulnerable}  ({vulnerable / total:.0%})" if total else "Vulnerable : 0")
-    print(f"Resisted   : {total - vulnerable}  ({summary['pass_rate']:.0%})" if total else "Resisted   : 0")
+    print(f"Vulnerable : {vulnerable}  ({vulnerable / decided:.0%})" if decided else "Vulnerable : 0")
+    print(f"Resisted   : {decided - vulnerable}  ({summary['pass_rate']:.0%})" if decided else "Resisted   : 0")
+    if errored:
+        print(f"Errored    : {errored}  (excluded from rates — see 'error' field in results)")
     print("\nBy plugin:")
     for pid, counts in by_plugin.items():
         sev = counts.get("severity", "")
