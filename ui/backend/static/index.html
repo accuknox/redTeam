@@ -667,7 +667,10 @@ button{cursor:pointer}
 
         <!-- Strategies -->
         <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
-          <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.4px">Attack Strategies</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px">Attack Strategies</span>
+            <span class="section-badge empty" id="strat-badge">0</span>
+          </div>
           <div class="strat-grid" id="strat-grid"></div>
         </div>
       </div>
@@ -1241,15 +1244,21 @@ function renderStrategies() {
     .join('');
 }
 
+// Null-safe on purpose: this runs at the end of every selection handler, so a
+// missing badge element must not abort the caller before it rebuilds the config.
 function updateBadge() {
   const pb = document.getElementById('plugin-badge');
   const sb = document.getElementById('strat-badge');
   const n = selectedPlugins.size + customPlugins.length;
-  pb.textContent = n;
-  pb.className = n > 0 ? 'section-badge' : 'section-badge empty';
+  if (pb) {
+    pb.textContent = n;
+    pb.className = n > 0 ? 'section-badge' : 'section-badge empty';
+  }
   const ns = document.querySelectorAll('#strat-grid input:checked').length;
-  sb.textContent = ns;
-  sb.className = ns > 0 ? 'section-badge' : 'section-badge empty';
+  if (sb) {
+    sb.textContent = ns;
+    sb.className = ns > 0 ? 'section-badge' : 'section-badge empty';
+  }
 }
 
 function populateCustomPluginForm() {
@@ -1342,6 +1351,10 @@ function addCustomPlugin() {
     <button style="background:none;border:none;color:var(--text-muted);cursor:pointer" onclick="removeCustom('${id}',this.parentElement)">✕</button>`;
   el.appendChild(row);
 
+  // Update state first — if anything below throws, the user's input is still on
+  // screen instead of being wiped by a clear that ran before the failure.
+  updateBadge(); updateConfig();
+
   // Clear form
   document.getElementById('custom-id').value = '';
   document.getElementById('custom-obj').value = '';
@@ -1353,8 +1366,6 @@ function addCustomPlugin() {
     cb.checked = false;
     cb.closest('.cp-check')?.classList.remove('on');
   });
-
-  updateBadge(); updateConfig();
 }
 
 // Remove by id, not index — indices shift as earlier rows are removed.
