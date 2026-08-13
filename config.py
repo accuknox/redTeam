@@ -30,6 +30,7 @@ from plugins import (
     OpenAIGenerator,
     RedteamPlugin,
     get_plugin,
+    is_known_plugin_entry,
     resolve_plugin_ids,
 )
 from strategies import Strategy, get_strategy
@@ -278,17 +279,27 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                 per_max_chars = int(entry.get("max_chars", global_max_chars) or 0)
                 per_strats    = [get_strategy(s) for s in entry.get("strategies", [])]
 
-                if pid_or_cat.startswith("custom:"):
+                objective = str(entry.get("objective", "") or "")
+                # A custom plugin is either explicitly prefixed with "custom:" or
+                # any unknown id carrying an 'objective:' — the prefix is added
+                # here so callers (UI, hand-written configs) only supply a name.
+                is_custom = pid_or_cat.startswith("custom:") or (
+                    objective and not is_known_plugin_entry(pid_or_cat)
+                )
+
+                if is_custom:
                     # Custom plugin — user supplies the adversarial objective directly.
                     from plugins.custom import CustomPlugin
-                    objective = str(entry.get("objective", ""))
+                    custom_id = (
+                        pid_or_cat if pid_or_cat.startswith("custom:") else f"custom:{pid_or_cat}"
+                    )
                     if not objective:
                         raise ValueError(
                             f"plugin {pid_or_cat!r} starts with 'custom:' but has no 'objective' key"
                         )
                     plugins.append(CustomPlugin(
                         generation, purpose,
-                        plugin_id=pid_or_cat,
+                        plugin_id=custom_id,
                         objective=objective,
                         frameworks=list(entry.get("frameworks", [])),
                         controls=list(entry.get("controls", [])),
