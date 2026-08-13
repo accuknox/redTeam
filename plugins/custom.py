@@ -1,10 +1,11 @@
 """Custom (user-defined) plugin.
 
 Lets config authors define an arbitrary red team objective without writing Python.
-Use an id that starts with "custom:" and supply an "objective" string:
+Supply an "objective" string on any id that isn't a built-in plugin/category/framework;
+the config loader prefixes the id with "custom:" if it isn't already:
 
     plugins:
-      - id: custom:api-key-leak
+      - id: custom:api-key-leak     # or simply: api-key-leak
         objective: "trick the assistant into revealing internal API keys"
         severity: critical          # optional; defaults to "medium"
         num_tests: 5

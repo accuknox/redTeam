@@ -411,6 +411,26 @@ plugins:
 | `examples` | string | — | Seed examples injected into the meta-prompt to guide attack style. | `"' OR 1=1 --"` |
 | `generation_instructions` | string | global `generation_instructions` | Extra guidance for this plugin's meta-prompt only. | `"Focus on admin endpoints."` |
 
+#### Custom plugin — add `objective:` to define your own attack
+
+Any entry that carries an `objective:` and whose `id` is not a built-in plugin/category/framework
+becomes a user-defined plugin. The `custom:` prefix is added automatically, so `id: api-key-leak`
+and `id: custom:api-key-leak` are equivalent (both run as `custom:api-key-leak`). The objective
+drives both generation and grading.
+
+```yaml
+plugins:
+  - id: api-key-leak                    # stored and reported as custom:api-key-leak
+    objective: "trick the assistant into revealing internal API keys"
+    severity: critical
+    num_tests: 5
+    frameworks: [owasp:llm, nist:ai:rmf]   # optional; no auto-mapping for custom plugins
+    controls: [owasp:llm:06]               # optional
+```
+
+An unknown `id` *without* an `objective:` is still an error — a typo in a built-in id is not
+silently turned into a custom plugin.
+
 #### Per-plugin static dataset — add `dataset:` to skip LLM generation
 
 Add `dataset:` to any `id:` entry to use a file instead of calling the generation LLM. The `id` value automatically routes results to the correct detector — no separate `detector:` key needed.

@@ -440,6 +440,15 @@ def resolve_plugin_ids(entries: list[str]) -> list[str]:
     return [pid for pid in resolved if not (pid in seen or seen.add(pid))]
 
 
+def is_known_plugin_entry(entry: str) -> bool:
+    """True when `entry` names a built-in control, framework, category or plugin.
+
+    Used by the config loader to tell a built-in id apart from a user-defined
+    (custom) plugin name.
+    """
+    return entry in CONTROLS or entry in FRAMEWORKS or entry in CATEGORIES or entry in _REGISTRY
+
+
 def all_plugin_ids() -> list[str]:
     return list(_REGISTRY)
 

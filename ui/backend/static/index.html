@@ -360,6 +360,135 @@ button{cursor:pointer}
 }
 
 
+/* ── Custom Plugin Form ─────────────────────────────────────────────────── */
+.cp-form {
+  margin-top: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cp-form .field { margin-bottom: 0; }
+.cp-form .field textarea { min-height: 52px; }
+.cp-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.cp-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 4px;
+}
+.cp-hint code { font-family: var(--mono); color: var(--text); }
+/* Plugin id: fixed "custom:" prefix + free-text name */
+.cp-id {
+  display: flex;
+  align-items: stretch;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.cp-id:focus-within { border-color: var(--accent); }
+.cp-id .cp-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  -webkit-user-select: none;
+  user-select: none;
+  flex: none;
+}
+.cp-form .cp-id input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+/* Checkbox grids (frameworks / strategies).
+   Deliberately NOT inside .field — `.field label{display:block}` (0,1,1) beats a
+   plain `.cp-check` class and stacks the checkbox above its text. */
+.cp-group { display: block; }
+.cp-group > .cp-group-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.2px;
+}
+.cp-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.cp-checks .cp-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  min-width: 0;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.cp-checks .cp-check:hover { border-color: var(--text-muted); }
+.cp-checks .cp-check.on { border-color: var(--accent); background: var(--surface); }
+.cp-checks .cp-check input[type=checkbox] {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cp-checks .cp-check span {
+  display: block;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.35;
+  /* long ids wrap instead of spilling out of the tile;
+     word-break is the fallback for Safari < 15.4, which ignores `anywhere` */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.cp-add-btn {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity .15s;
+}
+.cp-add-btn:hover { opacity: .88; }
+
+
 /* ── Progress and Timer ────────────────────────────────────────────────── */
 #progress-section {
   background: var(--surface);
@@ -538,7 +667,10 @@ button{cursor:pointer}
 
         <!-- Strategies -->
         <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
-          <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.4px">Attack Strategies</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px">Attack Strategies</span>
+            <span class="section-badge empty" id="strat-badge">0</span>
+          </div>
           <div class="strat-grid" id="strat-grid"></div>
         </div>
       </div>
@@ -631,32 +763,48 @@ button{cursor:pointer}
         <!-- Custom plugin -->
         <details style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
           <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;padding:4px 0;font-weight:500">+ Add Custom Plugin</summary>
-          <div style="margin-top:8px">
-            <div class="field"><label>Plugin ID (custom:…)</label><input id="custom-id" placeholder="custom:my-attack"></div>
-            <div class="field"><label>Objective</label><textarea id="custom-obj" rows="2" placeholder="Convince the assistant to…"></textarea></div>
-            <div class="row2">
+          <div class="cp-form">
+            <div class="field">
+              <label>Plugin Name</label>
+              <div class="cp-id">
+                <span class="cp-prefix">custom:</span>
+                <input id="custom-id" placeholder="my-attack" autocomplete="off">
+              </div>
+              <div class="cp-hint">The <code>custom:</code> prefix is added automatically — just type a short name.</div>
+            </div>
+            <div class="field">
+              <label>Objective</label>
+              <textarea id="custom-obj" rows="2" placeholder="Convince the assistant to…"></textarea>
+            </div>
+            <div class="cp-row">
               <div class="field"><label>Severity</label>
                 <select id="custom-sev"><option>medium</option><option>low</option><option>high</option><option>critical</option><option>informational</option></select>
               </div>
               <div class="field"><label>Num tests</label><input id="custom-n" type="number" value="5" min="1"></div>
             </div>
-            <div class="row2">
+            <div class="cp-row">
               <div class="field"><label>Language</label>
-                <select id="custom-lang" style="font-size:12px">
-                  <option>—</option>
-                </select>
+                <select id="custom-lang"><option>—</option></select>
               </div>
               <div class="field"><label>Max chars</label><input id="custom-max-chars" type="number" min="50" placeholder="none"></div>
             </div>
-            <div class="field"><label>Frameworks (optional)</label>
-              <div id="custom-frameworks" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px"></div>
+            <div class="cp-group">
+              <span class="cp-group-label">Frameworks (optional)</span>
+              <div class="cp-checks" id="custom-frameworks"></div>
             </div>
-            <div class="field"><label>Generation Instructions (optional)</label><textarea id="custom-instructions" rows="2" style="font-size:11px" placeholder="Special instructions for this plugin…"></textarea></div>
-            <div class="field"><label>Examples (optional)</label><textarea id="custom-examples" rows="2" style="font-size:11px" placeholder="Examples for this plugin…"></textarea></div>
-            <div class="field"><label>Strategies (optional)</label>
-              <div id="custom-strategies" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px"></div>
+            <div class="field">
+              <label>Generation Instructions (optional)</label>
+              <textarea id="custom-instructions" rows="2" placeholder="Special instructions for this plugin…"></textarea>
             </div>
-            <button class="copy-btn" style="width:100%" onclick="addCustomPlugin()">Add Custom Plugin</button>
+            <div class="field">
+              <label>Examples (optional)</label>
+              <textarea id="custom-examples" rows="2" placeholder="Examples for this plugin…"></textarea>
+            </div>
+            <div class="cp-group">
+              <span class="cp-group-label">Strategies (optional)</span>
+              <div class="cp-checks" id="custom-strategies"></div>
+            </div>
+            <button class="cp-add-btn" onclick="addCustomPlugin()">Add Custom Plugin</button>
           </div>
         </details>
 
@@ -1096,15 +1244,21 @@ function renderStrategies() {
     .join('');
 }
 
+// Null-safe on purpose: this runs at the end of every selection handler, so a
+// missing badge element must not abort the caller before it rebuilds the config.
 function updateBadge() {
   const pb = document.getElementById('plugin-badge');
   const sb = document.getElementById('strat-badge');
   const n = selectedPlugins.size + customPlugins.length;
-  pb.textContent = n;
-  pb.className = n > 0 ? 'section-badge' : 'section-badge empty';
+  if (pb) {
+    pb.textContent = n;
+    pb.className = n > 0 ? 'section-badge' : 'section-badge empty';
+  }
   const ns = document.querySelectorAll('#strat-grid input:checked').length;
-  sb.textContent = ns;
-  sb.className = ns > 0 ? 'section-badge' : 'section-badge empty';
+  if (sb) {
+    sb.textContent = ns;
+    sb.className = ns > 0 ? 'section-badge' : 'section-badge empty';
+  }
 }
 
 function populateCustomPluginForm() {
@@ -1119,46 +1273,48 @@ function populateCustomPluginForm() {
 
   // Populate frameworks checkboxes
   const fwContainer = document.getElementById('custom-frameworks');
-  frameworks.forEach(fw => {
-    const label = document.createElement('label');
-    label.style.display = 'flex';
-    label.style.alignItems = 'center';
-    label.style.gap = '4px';
-    label.style.cursor = 'pointer';
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.value = fw.key;
-    const span = document.createElement('span');
-    span.textContent = fw.key;
-    label.appendChild(checkbox);
-    label.appendChild(span);
-    fwContainer.appendChild(label);
-  });
-
+  frameworks.forEach(fw => fwContainer.appendChild(cpCheckbox(fw.key, fw.key, fw.label || fw.key)));
 
   // Populate strategies checkboxes
   const stratContainer = document.getElementById('custom-strategies');
-  strategies.forEach(s => {
-    const label = document.createElement('label');
-    label.style.display = 'flex';
-    label.style.alignItems = 'center';
-    label.style.gap = '4px';
-    label.style.cursor = 'pointer';
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.value = s.id;
-    const span = document.createElement('span');
-    span.textContent = s.id;
-    label.appendChild(checkbox);
-    label.appendChild(span);
-    stratContainer.appendChild(label);
-  });
+  strategies.forEach(s => stratContainer.appendChild(cpCheckbox(s.id, s.id, s.description || s.id)));
+}
+
+// One checkbox tile for the custom-plugin form (frameworks / strategies grids).
+function cpCheckbox(value, text, title) {
+  const label = document.createElement('label');
+  label.className = 'cp-check';
+  label.title = title || text;
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.value = value;
+  checkbox.onchange = () => label.classList.toggle('on', checkbox.checked);
+  const span = document.createElement('span');
+  span.textContent = text;
+  label.appendChild(checkbox);
+  label.appendChild(span);
+  return label;
+}
+
+// "My Attack" / "custom:my-attack" / "my attack" → "my-attack" (prefix added by caller).
+function normalizeCustomName(raw) {
+  return raw.trim()
+    .replace(/^custom:/i, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^A-Za-z0-9._-]/g, '')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
 }
 
 function addCustomPlugin() {
-  const id  = document.getElementById('custom-id').value.trim();
-  const obj = document.getElementById('custom-obj').value.trim();
-  if (!id || !obj) return alert('ID and objective are required.');
+  const name = normalizeCustomName(document.getElementById('custom-id').value);
+  const obj  = document.getElementById('custom-obj').value.trim();
+  if (!name || !obj) return alert('Name and objective are required.');
+
+  // The "custom:" prefix is what marks a plugin as user-defined — always added here.
+  const id = `custom:${name}`;
+  if (customPlugins.some(p => p.id === id)) return alert(`${id} has already been added.`);
 
   const p = {
     id,
@@ -1192,8 +1348,12 @@ function addCustomPlugin() {
   row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:4px;padding:5px 8px;font-size:12px';
   row.innerHTML = `<span style="font-family:var(--mono);flex:1">${id}</span>
     <span class="sev-badge sev-${p.severity}">${p.severity}</span>
-    <button style="background:none;border:none;color:var(--text-muted);cursor:pointer" onclick="removeCustom(${customPlugins.length-1},this.parentElement)">✕</button>`;
+    <button style="background:none;border:none;color:var(--text-muted);cursor:pointer" onclick="removeCustom('${id}',this.parentElement)">✕</button>`;
   el.appendChild(row);
+
+  // Update state first — if anything below throws, the user's input is still on
+  // screen instead of being wiped by a clear that ran before the failure.
+  updateBadge(); updateConfig();
 
   // Clear form
   document.getElementById('custom-id').value = '';
@@ -1202,13 +1362,16 @@ function addCustomPlugin() {
   document.getElementById('custom-max-chars').value = '';
   document.getElementById('custom-instructions').value = '';
   document.getElementById('custom-examples').value = '';
-  document.querySelectorAll('#custom-frameworks input, #custom-strategies input').forEach(cb => cb.checked = false);
-
-  updateBadge(); updateConfig();
+  document.querySelectorAll('#custom-frameworks input, #custom-strategies input').forEach(cb => {
+    cb.checked = false;
+    cb.closest('.cp-check')?.classList.remove('on');
+  });
 }
 
-function removeCustom(idx, el) {
-  customPlugins.splice(idx, 1);
+// Remove by id, not index — indices shift as earlier rows are removed.
+function removeCustom(id, el) {
+  const idx = customPlugins.findIndex(p => p.id === id);
+  if (idx !== -1) customPlugins.splice(idx, 1);
   el.remove();
   updateBadge(); updateConfig();
 }
@@ -1381,7 +1544,9 @@ function buildConfig() {
 
       return entry;
     }),
-    ...customPlugins.map(p => ({ id: p.id, objective: p.objective, severity: p.severity, num_tests: p.num_tests })),
+    // Custom plugins are already stored in config shape (id, objective, severity,
+    // num_tests plus any optional language/max_chars/frameworks/examples/strategies).
+    ...customPlugins.map(p => ({ ...p })),
   ];
 
   const cfg = {
