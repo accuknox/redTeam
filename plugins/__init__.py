@@ -24,8 +24,6 @@ from plugins import (
 )
 from plugins.prompt_integrity import PromptInjectionPlugin
 
-# Risk-domain modules, in catalogue order. A plugin lives in the domain of the
-# risk it evidences — the taxonomy is shared with catalogue.yaml.
 _CATEGORY_MODULES = [
     prompt_integrity, data_protection, access_control, downstream_injection, rag,
     agentic, jailbreak, harmful_content, criminal, malicious_code, accuracy,
@@ -50,6 +48,7 @@ FRAMEWORKS: dict[str, list[str]] = {
         "system-prompt-override", "ascii-smuggling",
         "special-token-injection", "hijacking",
         "xss", "sql-injection", "shell-injection",             # LLM02 Insecure Output Handling
+        "reasoning-dos",                                       # LLM04 Model Denial of Service
         "package-hallucination",                               # LLM05 Supply Chain
         "pii:direct", "pii:api-db", "pii:session",            # LLM06 Sensitive Info Disclosure
         "pii:social", "cross-session-leak", "prompt-extraction",
@@ -57,9 +56,9 @@ FRAMEWORKS: dict[str, list[str]] = {
         "ssrf", "bola", "bfla",                                # LLM07 Insecure Plugin Design
         "mcp", "rag-poisoning", "rag-document-exfiltration",
         "excessive-agency", "goal-misalignment",               # LLM08 Excessive Agency
-        "agentic:memory-poisoning", "debug-access",
+        "agentic:memory-poisoning", "debug-access", "off-topic",
         "overreliance", "hallucination", "misinformation",     # LLM09 Overreliance
-        "rag-source-attribution",
+        "rag-source-attribution", "snowball", "sycophancy",
         "rbac", "model-identification", "tool-discovery",     # LLM10 Model Theft / AuthZ
     ],
     # OWASP API Security Top 10 (2023) — API1–API10
@@ -78,9 +77,11 @@ FRAMEWORKS: dict[str, list[str]] = {
         "goal-misalignment", "excessive-agency", "contracts",  # Govern — accountability
         "coppa", "ferpa",
         "hallucination", "overreliance", "misinformation",     # Map — identify risks
-        "fabrication", "sycophancy", "unverifiable-claims",
+        "fabrication", "sycophancy", "unverifiable-claims", "snowball",
         "financial:hallucination", "financial:counterfactual",
+        "financial:defamation", "financial:sycophancy",
         "harmful:hate", "harmful:harassment-bullying",         # Measure — bias & fairness
+        "harmful:insults", "harmful:profanity",
         "politics", "bias:age", "bias:gender", "bias:race",
         "bias:disability", "religion",
         "pii:direct", "pii:api-db", "pii:session",            # Measure — privacy
@@ -104,17 +105,26 @@ FRAMEWORKS: dict[str, list[str]] = {
         "rag-poisoning", "agentic:memory-poisoning",           # Persistence
         "malwaregen", "backdoor", "exploit-assist",            # Impact
         "harmful:chemical-biological-weapons",
+        "harmful:indiscriminate-weapons", "harmful:cybercrime",
         "harmful:radicalization",
     ],
     # EU AI Act — high-risk AI system requirements
     "eu:ai-act": [
         "hallucination", "misinformation", "fabrication",      # Transparency obligations
-        "sycophancy", "gaslighting", "unverifiable-claims",
+        "sycophancy", "gaslighting", "unverifiable-claims", "snowball",
+        "ai-disclosure",                                       # Art. 50 — tell people it's a machine
+        "harmful:copyright-violations",                        # Art. 53 — GPAI copyright / training data
+        "harmful:intellectual-property",
         "harmful:self-harm", "harmful:radicalization",         # Safety / prohibited practices
         "harmful:chemical-biological-weapons",
+        "harmful:indiscriminate-weapons",
         "harmful:specialized-advice", "harmful:unsafe-practices",
         "harmful:child-exploitation", "harmful:sex-crime",
+        "harmful:violent-crime", "harmful:non-violent-crime",
+        "harmful:illegal-activities", "harmful:illegal-drugs",
         "harmful:hate", "harmful:harassment-bullying",         # Non-discrimination / fundamental rights
+        "harmful:insults", "harmful:profanity",
+        "harmful:sexual-content",
         "harmful:graphic-content", "politics", "imitation",
         "bias:age", "bias:gender", "bias:race", "bias:disability",
         "pii:direct", "pii:api-db", "pii:session",            # Privacy and data governance
@@ -128,8 +138,9 @@ FRAMEWORKS: dict[str, list[str]] = {
         "goal-misalignment", "excessive-agency", "contracts",  # Governance and accountability
         "overreliance", "coppa", "ferpa",
         "hallucination", "misinformation", "fabrication",      # Transparency and explainability
-        "sycophancy", "unverifiable-claims",
+        "sycophancy", "unverifiable-claims", "snowball",
         "harmful:hate", "harmful:harassment-bullying",         # Harm prevention
+        "harmful:insults", "harmful:profanity", "politics",
         "harmful:self-harm", "harmful:specialized-advice",
         "harmful:unsafe-practices",
         "bias:age", "bias:gender", "bias:race", "bias:disability", # Fairness
@@ -184,6 +195,7 @@ CONTROLS: dict[str, list[str]] = {
                      "system-prompt-override", "ascii-smuggling",
                      "special-token-injection", "hijacking"],
     "owasp:llm:02": ["xss", "sql-injection", "shell-injection"],
+    "owasp:llm:04": ["reasoning-dos"],
     "owasp:llm:05": ["package-hallucination"],
     "owasp:llm:06": ["pii:direct", "pii:api-db", "pii:session",
                      "pii:social", "cross-session-leak", "prompt-extraction",
@@ -191,9 +203,9 @@ CONTROLS: dict[str, list[str]] = {
     "owasp:llm:07": ["ssrf", "bola", "bfla", "rbac",
                      "mcp", "rag-poisoning", "rag-document-exfiltration"],
     "owasp:llm:08": ["excessive-agency", "goal-misalignment",
-                     "agentic:memory-poisoning", "debug-access"],
+                     "agentic:memory-poisoning", "debug-access", "off-topic"],
     "owasp:llm:09": ["overreliance", "hallucination", "misinformation",
-                     "sycophancy", "rag-source-attribution"],
+                     "sycophancy", "rag-source-attribution", "snowball"],
     "owasp:llm:10": ["prompt-extraction", "rbac",
                      "model-identification", "tool-discovery"],
 
@@ -212,8 +224,10 @@ CONTROLS: dict[str, list[str]] = {
                            "coppa", "ferpa"],
     "nist:ai:rmf:map":    ["hallucination", "overreliance", "misinformation",
                            "fabrication", "sycophancy", "unverifiable-claims",
-                           "financial:hallucination", "financial:counterfactual"],
+                           "financial:hallucination", "financial:counterfactual",
+                           "financial:defamation", "financial:sycophancy", "snowball"],
     "nist:ai:rmf:measure": ["harmful:hate", "harmful:harassment-bullying", "politics",
+                            "harmful:insults", "harmful:profanity",
                             "bias:age", "bias:gender", "bias:race", "bias:disability",
                             "religion",
                             "pii:direct", "pii:api-db", "pii:session",
@@ -236,23 +250,34 @@ CONTROLS: dict[str, list[str]] = {
                                      "pii:api-db", "cross-session-leak", "data-exfil"],
     "mitre:atlas:impact":           ["malwaregen", "backdoor", "exploit-assist",
                                      "harmful:chemical-biological-weapons",
+                                     "harmful:indiscriminate-weapons",
+                                     "harmful:cybercrime",
                                      "harmful:radicalization"],
 
     # ── EU AI Act ─────────────────────────────────────────────────────────────
     "eu:ai-act:art5":   ["harmful:self-harm", "harmful:radicalization",
                          "harmful:chemical-biological-weapons",
+                         "harmful:indiscriminate-weapons",
                          "harmful:child-exploitation", "harmful:sex-crime",
+                         "harmful:violent-crime", "harmful:non-violent-crime",
+                         "harmful:illegal-activities", "harmful:illegal-drugs",
                          "harmful:unsafe-practices"],
     "eu:ai-act:art10":  ["pii:direct", "pii:api-db", "pii:session", "pii:social",
                          "harmful:privacy", "coppa", "ferpa"],
     "eu:ai-act:art13":  ["hallucination", "misinformation", "fabrication",
-                         "sycophancy", "gaslighting", "unverifiable-claims"],
+                         "sycophancy", "gaslighting", "unverifiable-claims",
+                         "snowball", "ai-disclosure"],
     "eu:ai-act:art14":  ["excessive-agency", "goal-misalignment", "overreliance",
                          "agentic:memory-poisoning"],
     "eu:ai-act:art15":  ["hallucination", "fabrication"],
     "eu:ai-act:annex3": ["harmful:hate", "harmful:harassment-bullying",
+                         "harmful:insults", "harmful:profanity",
+                         "harmful:sexual-content", "harmful:graphic-content",
                          "politics", "imitation",
                          "bias:age", "bias:gender", "bias:race", "bias:disability"],
+    # Art. 53 — GPAI obligations: copyright policy and training-data transparency.
+    "eu:ai-act:art53":  ["harmful:copyright-violations",
+                         "harmful:intellectual-property"],
 
     # ── ISO/IEC 42001 ─────────────────────────────────────────────────────────
     "iso:42001:6.1": ["goal-misalignment", "excessive-agency",
@@ -262,9 +287,11 @@ CONTROLS: dict[str, list[str]] = {
     "iso:42001:8.2": ["prompt-injection", "prompt-extraction", "rbac",
                       "agentic:memory-poisoning", "rag-poisoning"],
     "iso:42001:8.4": ["harmful:hate", "harmful:harassment-bullying", "politics",
+                      "harmful:insults", "harmful:profanity",
                       "harmful:unsafe-practices"],
     "iso:42001:8.5": ["bias:age", "bias:gender", "bias:race", "bias:disability"],
-    "iso:42001:9.1": ["hallucination", "misinformation", "unverifiable-claims"],
+    "iso:42001:9.1": ["hallucination", "misinformation", "unverifiable-claims",
+                      "snowball"],
 }
 
 # Reverse map: plugin id → every specific control it maps to.
@@ -343,6 +370,7 @@ PLUGIN_SEVERITY: dict[str, str] = {
     "data-exfil":                  "high",
     "divergent-repetition":        "medium",
     "reasoning-dos":               "medium",
+    "ai-disclosure":               "high",
     "rag-poisoning":               "critical",
     "rag-document-exfiltration":   "high",
     "rag-source-attribution":      "medium",

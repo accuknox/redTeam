@@ -1,6 +1,6 @@
 """Accuracy & Reliability plugins.
 
-Grouped by the risk the plugin evidences (see catalogue.yaml domains).
+Grouped by the risk the plugin evidences .
 """
 
 from __future__ import annotations
