@@ -44,6 +44,132 @@ from typing import Any, Callable, Iterable
 Message = dict[str, str]  # {"role": "system"|"user"|"assistant", "content": str}
 
 
+# --------------------------------------------------------------------------- #
+# Tool-call capture
+#
+# When an agent decides to *act* it returns no text — the action sits in a
+# vendor-specific field and `content` is null. That action IS the outcome we
+# grade, so it has to survive into the response string; otherwise a successful
+# tool-mediated exfiltration reaches the grader as "" and reads as a refusal.
+#
+# Vendors disagree on the shape, so we search by key name anywhere in the
+# reply rather than following one fixed path.
+# --------------------------------------------------------------------------- #
+
+#: Keys that carry a tool/function invocation, across vendors.
+_TOOL_CALL_KEYS = (
+    "tool_calls",      # OpenAI, vLLM, Ollama, Together
+    "toolCalls",
+    "tool_use",        # Anthropic (also appears as a content-block `type`)
+    "toolUse",         # Bedrock
+    "functionCall",    # Gemini
+    "function_call",   # OpenAI (legacy)
+)
+
+#: Content-block `type` values that mark the block itself as an invocation.
+_TOOL_BLOCK_TYPES = ("tool_use", "toolUse", "function_call", "functionCall")
+
+
+def _as_plain(obj: Any) -> Any:
+    """Best-effort conversion of an SDK response object to plain dict/list data."""
+    for attr in ("model_dump", "dict", "to_dict"):
+        fn = getattr(obj, attr, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+    return obj
+
+
+def _render_one_call(call: Any) -> str:
+    """Render a single invocation as `[tool_call] name(args)`.
+
+    Handles both the nested OpenAI form (`{"function": {...}}`) and the flat
+    Anthropic/Gemini form, and arguments given as either a JSON string or an
+    already-decoded object.
+    """
+    import json as _json
+
+    if not isinstance(call, dict):
+        return ""
+    inner = call.get("function")
+    fn = inner if isinstance(inner, dict) else call
+    name = fn.get("name") or call.get("name")
+    if not name:
+        return ""
+    for key in ("arguments", "input", "args", "parameters"):
+        if key in fn:
+            args = fn[key]
+            break
+    else:
+        args = ""
+    if isinstance(args, (dict, list)):
+        try:
+            args = _json.dumps(args)
+        except (TypeError, ValueError):
+            args = str(args)
+    return f"[tool_call] {name}({args})"
+
+
+def render_tool_calls(data: Any, *, max_nodes: int = 5000) -> str:
+    """Return every tool invocation in `data`, rendered one per line.
+
+    `max_nodes` bounds the walk so a pathologically large reply cannot stall a
+    scan. Returns "" when the reply contains no invocation, which is the case
+    for every ordinary chat target.
+    """
+    from collections import deque
+
+    queue, out, seen = deque([_as_plain(data)]), [], 0
+    while queue and seen < max_nodes:
+        node = queue.popleft()
+        seen += 1
+        if isinstance(node, dict):
+            if node.get("type") in _TOOL_BLOCK_TYPES:
+                rendered = _render_one_call(node)
+                if rendered:
+                    out.append(rendered)
+                continue
+            for key, value in node.items():
+                if key in _TOOL_CALL_KEYS:
+                    items = value if isinstance(value, list) else [value]
+                    out.extend(r for r in map(_render_one_call, items) if r)
+                else:
+                    queue.append(value)
+        elif isinstance(node, list):
+            queue.extend(node)
+    return "\n".join(dict.fromkeys(out))  # de-duplicate, preserve order
+
+
+def with_tool_calls(text: str, data: Any, *, raw_cap: int = 800) -> str:
+    """Combine extracted text with any tool calls found in the same reply.
+
+    A reply may carry both ("one moment…" plus the call), so these are appended
+    rather than substituted. When there is neither text nor a recognised
+    invocation, fall back to a truncated dump of the raw reply: an unfamiliar
+    response shape should still reach the grader as evidence, because an empty
+    string always reads as a refusal.
+    """
+    import json as _json
+
+    text = (text or "").strip()
+    tools = render_tool_calls(data)
+    if text and tools:
+        return f"{text}\n{tools}"
+    if tools:
+        return tools
+    if text:
+        return text
+    try:
+        raw = _json.dumps(_as_plain(data))
+    except (TypeError, ValueError):
+        raw = str(data)
+    if raw and raw not in ("{}", "[]", "null", '""'):
+        return f"[no text content; raw reply] {raw[:raw_cap]}"
+    return ""
+
+
 class Provider(ABC):
     """Generalized target model. Subclass and implement `_complete()`."""
 
@@ -212,6 +338,23 @@ class RestProvider(Provider):
         return obj
 
     @staticmethod
+    def _extract_raw(data: Any, field: str) -> Any:
+        """Walk a dot-notation path and return the value **uncoerced**.
+
+        `_extract` stringifies whatever it lands on, which is right when the user
+        named the field explicitly but wrong for auto-detection: keys like
+        `content` and `output` name container nodes in some vendors' shapes, and
+        their repr is not reply text.
+        """
+        current = data
+        for part in field.split("."):
+            if isinstance(current, list):
+                current = current[int(part)]
+            else:
+                current = current[part]
+        return current
+
+    @staticmethod
     def _extract(data: Any, field: str) -> str:
         """Pull a value from a JSON response using dot-notation.
 
@@ -312,12 +455,24 @@ class RestProvider(Provider):
                 f"Response: {resp.text[:500]}\nError: {e}"
             )
 
+        # Text and tool calls are combined so an agent's *action* reaches the
+        # grader; see with_tool_calls().
+        return with_tool_calls(self._extract_text(data), data)
+
+    def _extract_text(self, data: Any) -> str:
+        """Pull the reply text out of a parsed JSON body."""
+        import json as _json
+
         # Extract response text (auto-detect if response_field not specified)
         if self.response_field:
             # User specified field path
             try:
                 return self._extract(data, self.response_field)
             except (KeyError, IndexError, ValueError, TypeError) as e:
+                # A pure tool call has no text field to extract — let the caller
+                # fall back to the rendered invocation rather than failing.
+                if render_tool_calls(data):
+                    return ""
                 raise ValueError(f"Cannot extract field '{self.response_field}': {e}")
 
         # Auto-detect: try common response patterns
@@ -335,9 +490,25 @@ class RestProvider(Provider):
 
         for path in common_paths:
             try:
-                return self._extract(data, path)
+                value = self._extract_raw(data, path)
             except (KeyError, IndexError, ValueError, TypeError):
                 continue
+            # Only a string is reply text. `content` / `output` / `result` also
+            # name container nodes in other vendors' shapes (Anthropic's content
+            # block list, Bedrock's output object) — their repr is structure, not
+            # words, so skip them and let a later path or the tool renderer win.
+            if isinstance(value, str) and value.strip():
+                return value
+
+        # Anthropic-style content blocks: join the text blocks, ignore the rest.
+        blocks = data.get("content") if isinstance(data, dict) else None
+        if isinstance(blocks, list):
+            joined = "".join(
+                b.get("text", "") for b in blocks
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+            if joined.strip():
+                return joined
 
         # Last resort: return first string value in response
         def find_first_string(obj):
@@ -352,12 +523,21 @@ class RestProvider(Provider):
                 return find_first_string(obj[0])
             return None
 
-        text = find_first_string(data)
-        if text:
-            return text
+        # Only guess when there is no invocation to report: in a tool-call reply
+        # the first string in the tree is the *tool name*, which would be
+        # mistaken for the model's answer.
+        if not render_tool_calls(data):
+            text = find_first_string(data)
+            # Require it to look like prose. In an unrecognised shape the first
+            # string is as often a key, an id or an action name ("read_db") as it
+            # is the reply, and handing the grader a bare token is worse than
+            # handing it the raw body it can actually read.
+            if text and (" " in text.strip() or len(text.strip()) >= 40):
+                return text
 
-        # If still nothing, return full response as string
-        return _json.dumps(data)
+        # Nothing text-shaped. Leave it to with_tool_calls(), which renders any
+        # invocation it recognises and otherwise dumps the raw reply.
+        return ""
 
     @classmethod
     def from_config_file(cls, path: "str | Path", *, api_key: str | None = None) -> "RestProvider":
@@ -435,7 +615,10 @@ class AnthropicProvider(Provider):
             messages=non_system_messages,
             **self.params,
         )
-        return "".join(b.text for b in response.content if b.type == "text")
+        # `tool_use` blocks carry no `.text`, so the text join alone would drop an
+        # agent's action entirely — with_tool_calls() recovers it.
+        text = "".join(b.text for b in response.content if b.type == "text")
+        return with_tool_calls(text, response)
 
 
 class MistralProvider(Provider):
@@ -468,7 +651,7 @@ class MistralProvider(Provider):
             max_tokens=self.max_tokens,
             **self.params,
         )
-        return response.choices[0].message.content or ""
+        return with_tool_calls(response.choices[0].message.content or "", response)
 
 
 class CallableProvider(Provider):

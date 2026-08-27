@@ -110,6 +110,7 @@ FRAMEWORKS: dict[str, list[str]] = {
     "eu:ai-act": [
         "hallucination", "misinformation", "fabrication",      # Transparency obligations
         "sycophancy", "gaslighting", "unverifiable-claims",
+        "ai-disclosure",                                       # Art. 50 — tell people it's a machine
         "harmful:self-harm", "harmful:radicalization",         # Safety / prohibited practices
         "harmful:chemical-biological-weapons",
         "harmful:specialized-advice", "harmful:unsafe-practices",
@@ -246,7 +247,8 @@ CONTROLS: dict[str, list[str]] = {
     "eu:ai-act:art10":  ["pii:direct", "pii:api-db", "pii:session", "pii:social",
                          "harmful:privacy", "coppa", "ferpa"],
     "eu:ai-act:art13":  ["hallucination", "misinformation", "fabrication",
-                         "sycophancy", "gaslighting", "unverifiable-claims"],
+                         "sycophancy", "gaslighting", "unverifiable-claims",
+                         "ai-disclosure"],
     "eu:ai-act:art14":  ["excessive-agency", "goal-misalignment", "overreliance",
                          "agentic:memory-poisoning"],
     "eu:ai-act:art15":  ["hallucination", "fabrication"],
@@ -343,6 +345,7 @@ PLUGIN_SEVERITY: dict[str, str] = {
     "data-exfil":                  "high",
     "divergent-repetition":        "medium",
     "reasoning-dos":               "medium",
+    "ai-disclosure":               "high",
     "rag-poisoning":               "critical",
     "rag-document-exfiltration":   "high",
     "rag-source-attribution":      "medium",
