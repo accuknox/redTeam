@@ -802,7 +802,7 @@ button{cursor:pointer}
             </div>
             <div class="cp-group">
               <span class="cp-group-label">Strategies (optional)</span>
-              <div class="cp-checks" id="custom-strategies"></div>
+              <div class="strat-grid" id="custom-strategies"></div>
             </div>
             <button class="cp-add-btn" onclick="addCustomPlugin()">Add Custom Plugin</button>
           </div>
@@ -1275,9 +1275,12 @@ function populateCustomPluginForm() {
   const fwContainer = document.getElementById('custom-frameworks');
   frameworks.forEach(fw => fwContainer.appendChild(cpCheckbox(fw.key, fw.key, fw.label || fw.key)));
 
-  // Populate strategies checkboxes
-  const stratContainer = document.getElementById('custom-strategies');
-  strategies.forEach(s => stratContainer.appendChild(cpCheckbox(s.id, s.id, s.description || s.id)));
+  // Strategies use the same renderer as the sidebar, so a custom plugin gets the
+  // visible description and the ⚙ tunables panel rather than a bare checkbox.
+  // The 'custom' scope namespaces those inputs away from the global ones.
+  document.getElementById('custom-strategies').innerHTML = strategies
+    .map(s => stratRowHTML(s, 'custom', '', ''))
+    .join('');
 }
 
 // One checkbox tile for the custom-plugin form (frameworks / strategies grids).
@@ -1339,7 +1342,10 @@ function addCustomPlugin() {
   const examples = document.getElementById('custom-examples').value.trim();
   if (examples) p.examples = examples;
 
-  const strategies = [...document.querySelectorAll('#custom-strategies input:checked')].map(cb => cb.value);
+  // strategyEntry() returns the plain id, or {id, config} when a ⚙ tunable was
+  // changed from its default — the same two forms the config loader accepts.
+  const strategies = [...document.querySelectorAll('#custom-strategies input[type=checkbox]:checked')]
+    .map(cb => strategyEntry('custom', cb.value));
   if (strategies.length) p.strategies = strategies;
 
   customPlugins.push(p);
@@ -1362,9 +1368,23 @@ function addCustomPlugin() {
   document.getElementById('custom-max-chars').value = '';
   document.getElementById('custom-instructions').value = '';
   document.getElementById('custom-examples').value = '';
-  document.querySelectorAll('#custom-frameworks input, #custom-strategies input').forEach(cb => {
-    cb.checked = false;
-    cb.closest('.cp-check')?.classList.remove('on');
+  document.querySelectorAll('#custom-frameworks input, #custom-strategies input[type=checkbox]')
+    .forEach(cb => {
+      cb.checked = false;
+      cb.closest('.cp-check')?.classList.remove('on');
+    });
+  // Reset the ⚙ tunables to their defaults and re-collapse their panels, so the
+  // next custom plugin does not silently inherit the previous one's settings.
+  document.querySelectorAll('#custom-strategies .strat-opt').forEach(inp => {
+    const field = STRAT_OPTS[inp.dataset.sid]?.fields.find(f => f.key === inp.dataset.key);
+    if (field) inp.value = field.def;
+  });
+  document.querySelectorAll('#custom-strategies .strat-opts').forEach(panel => {
+    panel.style.display = 'none';
+    panel.closest('.strat-row')?.classList.remove('open');
+  });
+  document.querySelectorAll('#custom-strategies .strat-cost').forEach(el => {
+    el.textContent = STRAT_OPTS[el.dataset.sid].cost(defaultStratVals(el.dataset.sid));
   });
 }
 
