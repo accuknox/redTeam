@@ -19,10 +19,19 @@ from detectors.judge import (
     HuggingFaceJudge,
     LocalJudge,
 )
-from detectors import security, privacy, harmful, criminal, trust, jailbreak, deception, code, custom
+from detectors import (
+    prompt_integrity, data_protection, access_control, downstream_injection, rag,
+    agentic, jailbreak, harmful_content, criminal, malicious_code, accuracy,
+    brand, fairness, regulated, transparency, custom,
+)
 
-# High-level category detector modules, parallel to the plugin categories.
-_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code, custom]
+# Risk-domain detector modules, mirroring the plugin domains one for one.
+# `custom` is not a domain — it is the grader for user-defined plugins.
+_CATEGORY_MODULES = [
+    prompt_integrity, data_protection, access_control, downstream_injection, rag,
+    agentic, jailbreak, harmful_content, criminal, malicious_code, accuracy,
+    brand, fairness, regulated, transparency, custom,
+]
 
 #: category key -> list of detector ids (== plugin ids) in that category.
 DETECTOR_CATEGORIES: dict[str, list[str]] = {}

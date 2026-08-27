@@ -1,20 +1,17 @@
-"""Agentic & Tool-Use plugins.
+"""Agentic & Tool Use plugins.
 
-Probes vulnerabilities that emerge when the model has access to persistent
-memory, external tools, or Model Context Protocol (MCP) servers. These risks
-only surface in agentic deployments where the model can read/write state
-beyond the current conversation.
+Grouped by the risk the plugin evidences (see catalogue.yaml domains).
 """
 
 from __future__ import annotations
 
 from plugins.category import CategoryPlugin
 
-CATEGORY = "agentic"
+CATEGORY = 'agentic'
 
 
 class AgenticPlugin(CategoryPlugin):
-    category = "Agentic & Tool-Use"
+    category = 'Agentic & Tool Use'
 
 
 class MemoryPoisoningPlugin(AgenticPlugin):

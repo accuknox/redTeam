@@ -19,9 +19,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import load_config
-from detectors import get_detector
+from detectors import all_detector_ids, get_detector
 from findings import FindingsReport
 from strategies import apply_strategies
+
+#: Detector ids with a dedicated grader, resolved once at import.
+_DETECTOR_IDS = frozenset(all_detector_ids())
+
+
+def _detector_for(case, judge):
+    """Resolve the grader for one case — dedicated first, CustomDetector second.
+
+    Mirrors the dispatch in `cli.py`. Built-in plugins carry their own id as
+    `detector_id` and grade against a response-voice rubric; user-defined plugins
+    carry "custom" and grade against their configured objective.
+    """
+    if case.detector_id in _DETECTOR_IDS and case.detector_id != "custom":
+        return get_detector(case.detector_id, judge)
+    objective = case.metadata.get("objective")
+    if objective:
+        from detectors.custom import CustomDetector
+        return CustomDetector(judge, objective=objective)
+    return get_detector(case.detector_id, judge)
 
 
 def _generate_for_plugin(plugin):
@@ -113,7 +132,7 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
                 print(f"[{i}] {strategy_tag}{case.prompt}")
 
                 response = target.generate(case.prompt)
-                detector = get_detector(case.detector_id, cfg.grading)
+                detector = _detector_for(case, cfg.grading)
                 result = detector.grade(
                     attack=case.prompt, response=response, purpose=cfg.purpose
                 )

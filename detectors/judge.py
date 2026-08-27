@@ -196,9 +196,26 @@ class LocalJudge(Judge):
         self.timeout = timeout
         self.gated = gated
         self.params = params
+        self._session = None  # lazily built; reused so TLS/TCP setup is paid once
+
+    def _get_session(self):
+        """A pooled `requests.Session`, built once per judge.
+
+        One grading call per case means the handshake cost was previously paid
+        on every case in the run.
+        """
+        if self._session is None:
+            import requests
+            from requests.adapters import HTTPAdapter
+
+            session = requests.Session()
+            adapter = HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=0)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            self._session = session
+        return self._session
 
     def _call(self, messages: list[dict]) -> str:
-        import requests
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
@@ -216,7 +233,7 @@ class LocalJudge(Judge):
         url = (b if b.endswith("/chat/completions")
                else f"{b}/chat/completions" if b.endswith("/v1")
                else f"{b}/v1/chat/completions")
-        resp = requests.post(
+        resp = self._get_session().post(
             url,
             json=payload,
             headers=headers,

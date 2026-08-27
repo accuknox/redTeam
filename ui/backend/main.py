@@ -60,29 +60,23 @@ KNOX_RT_DIR = Path(__file__).parent.parent.parent
 
 def _load_plugin_meta() -> dict:
     try:
-        from plugins import CATEGORIES, _REGISTRY, PLUGIN_FRAMEWORKS, PLUGIN_SEVERITY
-        from plugins import COMPLIANCE_FRAMEWORKS
+        from plugins import CATEGORIES, CATEGORY_LABELS, _REGISTRY, PLUGIN_FRAMEWORKS, PLUGIN_SEVERITY
 
         categories = []
-        for cat_key, cat_info in CATEGORIES.items():
-            plugins = []
-            for pid, cls in _REGISTRY.items():
-                if getattr(cls, "_category", None) == cat_key or pid.startswith(f"{cat_key}:") or (
-                    hasattr(cls, "id") and cls.id and any(
-                        p.id == pid for p in cat_info.get("plugins", [])
-                    )
-                ):
-                    plugins.append({
-                        "id": pid,
-                        "objective": getattr(cls, "objective", ""),
-                        "severity": PLUGIN_SEVERITY.get(pid, "medium"),
-                        "frameworks": PLUGIN_FRAMEWORKS.get(pid, []),
-                    })
+        for cat_key, plugin_ids in CATEGORIES.items():
             categories.append({
                 "key": cat_key,
-                "label": cat_info.get("label", cat_key),
-                "description": cat_info.get("description", ""),
-                "plugins": plugins,
+                "label": CATEGORY_LABELS.get(cat_key, cat_key),
+                "description": "",
+                "plugins": [
+                    {
+                        "id": pid,
+                        "objective": getattr(_REGISTRY[pid], "objective", ""),
+                        "severity": PLUGIN_SEVERITY.get(pid, "medium"),
+                        "frameworks": PLUGIN_FRAMEWORKS.get(pid, []),
+                    }
+                    for pid in plugin_ids
+                ],
             })
         return {"categories": categories}
     except Exception as exc:
@@ -91,15 +85,12 @@ def _load_plugin_meta() -> dict:
 
 def _load_all_plugins() -> list[dict]:
     try:
-        from plugins import _REGISTRY, PLUGIN_FRAMEWORKS, PLUGIN_SEVERITY, CATEGORIES
+        from plugins import _REGISTRY, PLUGIN_FRAMEWORKS, PLUGIN_SEVERITY, category_for_plugin
         results = []
         for pid, cls in _REGISTRY.items():
-            # determine category
-            cat_key = ""
-            for ck, cinfo in CATEGORIES.items():
-                if pid.startswith(f"{ck}:") or pid == ck:
-                    cat_key = ck
-                    break
+            # The registry is authoritative; a plugin id's prefix is not — e.g.
+            # "harmful:privacy" lives in data-protection, "xss" in downstream-injection.
+            cat_key, _ = category_for_plugin(pid)
             results.append({
                 "id": pid,
                 "category": cat_key,

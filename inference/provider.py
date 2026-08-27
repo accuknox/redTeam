@@ -167,8 +167,30 @@ class RestProvider(Provider):
         self.timeout = timeout
         self.params.update(params)
         self.name = model or base_url
+        self._session = None  # lazily built; reused so TLS/TCP setup is paid once
 
     # ---- helpers -------------------------------------------------------------
+
+    def _get_session(self):
+        """A pooled `requests.Session`, built once per provider.
+
+        Without this every call opened a fresh connection — a full TCP and TLS
+        handshake per attack, which against a remote HTTPS endpoint costs more
+        than the request itself. The pool is sized for the largest concurrency
+        the runner is likely to drive through one provider instance.
+        """
+        if self._session is None:
+            import requests
+            from requests.adapters import HTTPAdapter
+
+            session = requests.Session()
+            # max_retries=0: Provider.generate() already retries with backoff,
+            # and stacking urllib3's retries on top would multiply the delay.
+            adapter = HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=0)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            self._session = session
+        return self._session
 
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -259,7 +281,7 @@ class RestProvider(Provider):
             else:
                 url = f"{b}/v1/chat/completions"
 
-        http_fn = getattr(requests, self.method)
+        http_fn = getattr(self._get_session(), self.method)
         resp = http_fn(url, json=body, headers=headers, timeout=self.timeout)
 
         # Handle HTTP errors with helpful messages

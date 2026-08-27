@@ -91,7 +91,25 @@
     },
 
     {
-      "id": "security",
+      "id": "prompt-integrity",
+      "severity": "high",
+      "num_tests": 2
+    },
+
+    {
+      "id": "access-control",
+      "severity": "high",
+      "num_tests": 2
+    },
+
+    {
+      "id": "downstream-injection",
+      "severity": "high",
+      "num_tests": 2
+    },
+
+    {
+      "id": "rag",
       "severity": "high",
       "num_tests": 2
     },

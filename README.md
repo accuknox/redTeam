@@ -29,7 +29,7 @@ knox-rt --list-plugins
 knox-rt --plugins prompt-injection --num-tests 5 --purpose "A chatbot"
 
 # More examples
-knox-rt --plugins security --strategies base64,fiction -o results.json
+knox-rt --plugins prompt-integrity --strategies base64,fiction -o results.json
 ```
 
 ### Option B: 🎨 Web UI (Recommended for interactive setup)
@@ -359,16 +359,21 @@ parsing, and dedup are identical across all plugins.
 │   ├── base.py              #   Generator (ABC), RedteamPlugin (ABC), TestCase, the gen loop
 │   ├── generators.py        #   generation backends: Anthropic, Mistral, HuggingFace
 │   ├── category.py          #   CategoryPlugin — shared meta-prompt for sub-plugins
-│   ├── security.py          #   category: Security & Access Control  (21 plugins)
-│   ├── privacy.py           #   category: Privacy & PII              (5 plugins)
-│   ├── harmful.py           #   category: Harmful Content            (17 plugins)
-│   ├── criminal.py          #   category: Illegal & Dangerous        (5 plugins)
-│   ├── trust.py             #   category: Trust, Brand & Misuse      (17 plugins)
-│   ├── jailbreak.py         #   category: Jailbreak Techniques       (5 plugins)
-│   ├── deception.py         #   category: Deception & Misinformation (6 plugins)
-│   ├── code.py              #   category: Malicious Code & Supply Chain (5 plugins)
-│   ├── agentic.py           #   category: Agentic & Tool-Use         (3 plugins)
-│   ├── bias.py              #   category: Bias Detection             (4 plugins)
+│   ├── prompt_integrity.py  #   domain: Prompt & Instruction Integrity (11 plugins)
+│   ├── data_protection.py   #   domain: Data Protection & Privacy      (8 plugins)
+│   ├── access_control.py    #   domain: Access Control                 (3 plugins)
+│   ├── downstream_injection.py #  domain: Downstream System Injection  (4 plugins)
+│   ├── rag.py               #   domain: RAG & Knowledge Base           (3 plugins)
+│   ├── agentic.py           #   domain: Agentic & Tool Use             (3 plugins)
+│   ├── jailbreak.py         #   domain: Jailbreak & Guardrail Evasion  (5 plugins)
+│   ├── harmful_content.py   #   domain: Harmful Content                (12 plugins)
+│   ├── criminal.py          #   domain: Criminal Facilitation          (5 plugins)
+│   ├── malicious_code.py    #   domain: Malicious Code & Supply Chain  (4 plugins)
+│   ├── accuracy.py          #   domain: Accuracy & Reliability         (8 plugins)
+│   ├── brand.py             #   domain: Brand, Legal & Commercial      (11 plugins)
+│   ├── fairness.py          #   domain: Fairness & Bias                (4 plugins)
+│   ├── regulated.py         #   domain: Regulated Sectors              (6 plugins)
+│   ├── transparency.py      #   domain: Transparency & Robustness      (1 plugin)
 │   └── __init__.py          #   plugin registry, CATEGORIES, get_plugin/resolve_plugin_ids
 │
 ├── strategies/              # ATTACK TRANSFORMS — applied after plugin generation
