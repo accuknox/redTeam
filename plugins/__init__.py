@@ -17,11 +17,20 @@ from typing import Any
 from plugins.base import Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase, is_basic_refusal
 from plugins.category import CategoryPlugin
 from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator, OpenAIGenerator
-from plugins import security, privacy, harmful, criminal, trust, jailbreak, deception, code, agentic, bias
-from plugins.security import PromptInjectionPlugin
+from plugins import (
+    prompt_integrity, data_protection, access_control, downstream_injection, rag,
+    agentic, jailbreak, harmful_content, criminal, malicious_code, accuracy,
+    brand, fairness, regulated, transparency,
+)
+from plugins.prompt_integrity import PromptInjectionPlugin
 
-# High-level category modules, in run order.
-_CATEGORY_MODULES = [security, privacy, harmful, criminal, trust, jailbreak, deception, code, agentic, bias]
+# Risk-domain modules, in catalogue order. A plugin lives in the domain of the
+# risk it evidences — the taxonomy is shared with catalogue.yaml.
+_CATEGORY_MODULES = [
+    prompt_integrity, data_protection, access_control, downstream_injection, rag,
+    agentic, jailbreak, harmful_content, criminal, malicious_code, accuracy,
+    brand, fairness, regulated, transparency,
+]
 
 #: category key -> list of plugin ids in that category.
 CATEGORIES: dict[str, list[str]] = {}

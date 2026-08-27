@@ -28,10 +28,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import load_config
-from detectors import get_detector
+from detectors import all_detector_ids, get_detector
 from inference import CallableProvider, RestProvider
 from plugins import CATEGORIES, _REGISTRY, all_plugin_ids, category_for_plugin, get_plugin, resolve_plugin_ids
 from strategies import _REGISTRY as _STRATEGY_REGISTRY, get_strategy
+
+#: Detector ids with a dedicated grader, resolved once at import.
+_DETECTOR_IDS = frozenset(all_detector_ids())
 
 
 # --------------------------------------------------------------------------- #
@@ -87,7 +90,8 @@ examples:
     )
     run.add_argument(
         "--concurrency", type=int, default=None, metavar="N",
-        help="parallel worker threads (overrides config)",
+        help="cases to run at once (default 4; 1 for in-process huggingface "
+             "models). Raise for higher provider rate limits, lower on HTTP 429.",
     )
 
     tgt = p.add_argument_group("target (system under test)")
@@ -620,8 +624,16 @@ def main(argv: list[str] | None = None) -> None:
         if True:
             loop = asyncio.get_event_loop()
 
+            # Prefer the plugin's dedicated grader, whose `violation` is written in
+            # response voice ("reveals its system prompt"). CustomDetector reuses the
+            # generation objective as the rubric instead — correct for user-defined
+            # plugins (detector_id "custom"), but attacker-voiced objectives like
+            # "replace the operator's system prompt" describe the attack rather than
+            # the response, so a built-in must never fall through to it.
             obj = case.metadata.get("objective")
-            if obj:
+            if case.detector_id in _DETECTOR_IDS and case.detector_id != "custom":
+                detector = get_detector(case.detector_id, cfg.grading)
+            elif obj:
                 from detectors.custom import CustomDetector
                 detector = CustomDetector(cfg.grading, objective=obj)
             else:
@@ -745,6 +757,15 @@ def main(argv: list[str] | None = None) -> None:
         Evaluating per-plugin would cap in-flight requests at that plugin's case
         count and stall on its slowest case before the next plugin starts.
         """
+        # Provider and judge calls are blocking, so they run in a thread pool.
+        # The default executor is capped at min(32, cpu_count + 4) — on most
+        # machines below a high --concurrency, which would silently throttle the
+        # semaphore. Size the pool to the concurrency actually requested.
+        loop = asyncio.get_event_loop()
+        pool = ThreadPoolExecutor(max_workers=concurrency,
+                                  thread_name_prefix="knox-eval")
+        loop.set_default_executor(pool)
+
         sem = asyncio.Semaphore(concurrency)
         tasks = [asyncio.create_task(_evaluate_case(u, sem)) for u in units]
 
@@ -760,6 +781,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  [{done_n}/{n_total}] {res['plugin_id']:<34} "
                   f"{res['sev_tag']}{res['strat_tag']}{tgt_col}{res['verdict']}", flush=True)
             out.append(res)
+        pool.shutdown(wait=False)
         return out
 
     # One flat pool across all plugins and targets, so `concurrency` is the only

@@ -57,7 +57,7 @@ Set up what you want to test:
 
 ### 2. Select Plugins & Attacks
 
-- Browse plugins by security category (Access Control, Privacy, Code Execution, etc.)
+- Browse plugins by risk domain (Prompt & Instruction Integrity, Access Control, Data Protection & Privacy, etc.)
 - Select individual plugins or use framework presets (OWASP, NIST)
 - Customize each plugin's test count, severity, or attack instructions
 - Add custom plugins with your own objectives
@@ -187,8 +187,8 @@ Select **which vulnerabilities to test**.
 
 #### Browse by Category
 Each category card shows:
-- **Category name** (e.g., "Security & Access Control")
-- **Plugin count** (e.g., "21 plugins")
+- **Domain name** (e.g., "Prompt & Instruction Integrity")
+- **Plugin count** (e.g., "11 plugins")
 - **Expand** by clicking to see plugins
 
 Each plugin shows:

@@ -216,11 +216,30 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
     if not purpose:
         raise ValueError("'purpose' is required — set it at the top level or under 'target:'")
     num_tests = int(data.get("num_tests", data.get("num_generations", 5)))
-    concurrency = int(data.get("concurrency", 1))
     delay_ms = int(data.get("delay", 0) or 0)
 
     generation = build_generator(data["generation"])
     grading = build_judge(data["grading"])
+
+    # Concurrency default. A case is two network calls in sequence, and both are
+    # spent waiting on a remote API rather than working, so running several at
+    # once overlaps the waiting at almost no local cost. 4 is the largest value
+    # that stays inside the tightest free-tier rate limits; raise it with
+    # `concurrency:` or --concurrency once you know your provider's ceiling.
+    #
+    # `huggingface` is the exception: it holds the weights in this process, so a
+    # call is real computation, not waiting. PyTorch already uses every core for
+    # one generate(), so parallel calls only contend for the same cores while
+    # each adds its own KV cache — slower on a CPU-only laptop, and a possible
+    # OOM. That backend stays serial unless the user asks for more.
+    # (`local` grading is NOT this case: it is HTTP to an OpenAI-compatible
+    # server, so it parallelises like any other API backend.)
+    _in_process_backends = {"huggingface"}
+    _uses_in_process_model = any(
+        str((data.get(section) or {}).get("backend", "")).lower() in _in_process_backends
+        for section in ("generation", "grading")
+    )
+    concurrency = int(data.get("concurrency", 1 if _uses_in_process_model else 4))
 
     # Global options injected into every plugin's meta-prompt.
     global_instructions: str = data.get("generation_instructions", "") or ""

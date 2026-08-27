@@ -316,8 +316,50 @@ generation_instructions: |
 | `language` | string | `en` | Generate attacks in this language. ISO 639-1 code. Supported: `en es zh fr de ar ru ja pt ko hi it nl tr pl vi th id` | `zh` |
 | `max_chars_per_message` | int | — | Truncate all generated prompts to N characters. | `500` |
 | `delay` | int | `0` | Milliseconds to wait between target API calls. Use this to avoid rate-limit errors. | `200` |
-| `concurrency` | int | `1` | Parallel target API calls. Combine with `delay` for throughput tuning. | `4` |
+| `concurrency` | int | `4` (`1` for `huggingface`) | How many test cases run at once. See [Tuning concurrency](#tuning-concurrency). Combine with `delay` for throughput tuning. | `4` |
 | `generation_instructions` | string | — | Extra guidance appended to every plugin's meta-prompt. Use to focus attacks on your domain. | `"Target the payment and checkout flow."` |
+
+### Tuning concurrency
+
+A test case is two network calls in sequence — send the attack to the target,
+then send the reply to the grader. Almost all of that time is spent *waiting* on
+a remote API, not computing, so running several cases at once overlaps the
+waiting at very little local cost. Cases are independent, so results are
+unaffected by how many run in parallel.
+
+The default is **4**, chosen to stay inside the tightest free-tier rate limits.
+Raise it once you know your provider's ceiling:
+
+```yaml
+concurrency: 16     # or: knox-rt --concurrency 16
+```
+
+Rough guide — a case is 2 requests, so requests/min ≈ `concurrency × 2 × 60 / avg_seconds_per_call`:
+
+| Your provider's limit | Suggested `concurrency` |
+|---|---|
+| Free tier (~50 req/min) | `2`–`4` |
+| Standard paid tier | `8`–`16` |
+| High-volume / self-hosted | `32`+ |
+
+If you see HTTP 429 errors, lower `concurrency` or add `delay` (milliseconds
+between calls). The two combine: `delay` throttles each worker, `concurrency`
+sets how many workers there are.
+
+**Local models are the exception.** `backend: huggingface` loads the weights
+into this process, so a call is real computation rather than waiting. PyTorch
+already uses every core for a single generation, so parallel calls only contend
+for the same cores while each adds its own KV cache — slower on a CPU-only
+laptop, and a possible out-of-memory error. That backend therefore defaults to
+`1`. Set `concurrency` explicitly if you have the headroom.
+
+Note that `backend: local` (grading) is **not** affected: despite the name it is
+HTTP to an OpenAI-compatible server such as vLLM or Ollama, so it parallelises
+like any hosted API. Only `huggingface` runs in-process.
+
+If your target is a custom Python module (`--target-module`) that loads a model
+itself, the same caution applies — the config cannot detect that, so set
+`concurrency: 1` yourself.
 
 ---
 
@@ -371,14 +413,14 @@ knox-rt -c config.yaml --load-prompts prompts.jsonl --save-prompts prompts.jsonl
 ```yaml
 plugins:
   - prompt-injection   # single plugin
-  - security           # category → expands to all 9 sub-plugins
+  - prompt-integrity   # domain → expands to all 11 plugins in it
   - owasp:llm          # framework → expands to curated bundle (~20 plugins)
 ```
 
 | Value type | Expands to |
 |---|---|
 | Plugin id (e.g. `sql-injection`) | That one plugin using global defaults |
-| Category key (e.g. `security`) | All sub-plugins in that category |
+| Domain key (e.g. `prompt-integrity`) | All plugins in that risk domain |
 | Framework key (e.g. `owasp:llm`) | Curated bundle aligned to that compliance standard |
 
 Available framework keys: `owasp:llm`, `owasp:api`, `nist:ai:rmf`, `mitre:atlas`, `eu:ai-act`, `iso:42001`
@@ -403,7 +445,7 @@ plugins:
 
 | Parameter | Type | Default | Description | Example |
 |---|---|---|---|---|
-| `id` | string | **required** | Plugin id, category key, or framework key. When a category/framework key is used, all overrides apply to every plugin in the group. | `sql-injection` \| `security` \| `owasp:llm` |
+| `id` | string | **required** | Plugin id, domain key, or framework key. When a domain/framework key is used, all overrides apply to every plugin in the group. | `sql-injection` \| `prompt-integrity` \| `owasp:llm` |
 | `num_tests` | int | `num_tests` | Attacks for this plugin only. | `10` |
 | `severity` | string | per-plugin default | Risk label in output and summary. Each plugin has a built-in default (`critical` for RCE/injection, `high` for most security/privacy, `medium` for trust/jailbreak). Providing this key overrides the default. | `critical` \| `high` \| `medium` \| `low` |
 | `language` | string | global `language` | Language for this plugin's attacks only. | `en` |
