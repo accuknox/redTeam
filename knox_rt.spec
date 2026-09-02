@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for knox-rt standalone binary
+import glob
 from PyInstaller.utils.hooks import copy_metadata
 
 a = Analysis(
@@ -10,6 +11,8 @@ a = Analysis(
         *copy_metadata('anthropic'),
         *copy_metadata('mistralai'),
         *copy_metadata('openai'),
+        # Built-in seed datasets — used when generation is off (the default).
+        *[(f, 'datasets/builtin') for f in glob.glob('datasets/builtin/*.json')],
     ],
     hiddenimports=[
         # ── Generation backends (lazy-imported inside generators.py) ──────────

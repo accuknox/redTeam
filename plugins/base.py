@@ -27,8 +27,10 @@ _LANGUAGE_NAMES: dict[str, str] = {
     "nl": "Dutch",   "tr": "Turkish", "pl": "Polish",
     "vi": "Vietnamese", "th": "Thai", "id": "Indonesian",
 }
+import os
 import random
 import re
+import sys
 from abc import ABC, abstractmethod
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,6 +39,38 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import jinja2
+
+
+# --------------------------------------------------------------------------- #
+# Built-in seed datasets
+# --------------------------------------------------------------------------- #
+# When generation is turned off, each plugin draws its prompts from a static
+# seed file shipped in `datasets/builtin/<plugin-id>.json`. Plugin ids contain
+# ':' (e.g. "pii:direct"), which is illegal in Windows filenames, so it is
+# encoded as "__" on disk.
+
+def _builtin_dataset_dir() -> Path:
+    """Locate the bundled `datasets/builtin` directory.
+
+    Works both from a source checkout (dir next to this package) and from a
+    PyInstaller one-file build (unpacked under ``sys._MEIPASS``).
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        bundled = Path(meipass) / "datasets" / "builtin"
+        if bundled.is_dir():
+            return bundled
+    return Path(__file__).resolve().parent.parent / "datasets" / "builtin"
+
+
+def builtin_dataset_path(plugin_id: str) -> Path:
+    """Return the seed-dataset file for `plugin_id` (':' encoded as '__')."""
+    return _builtin_dataset_dir() / f"{plugin_id.replace(':', '__')}.json"
+
+
+def has_builtin_dataset(plugin_id: str) -> bool:
+    """True when a built-in seed file exists for `plugin_id`."""
+    return builtin_dataset_path(plugin_id).is_file()
 
 
 # --------------------------------------------------------------------------- #
@@ -264,6 +298,9 @@ class RedteamPlugin(ABC):
                 "generation_instructions": self.generation_instructions or None,
                 "examples": self.examples or None,
                 "num_tests": self.num_tests,
+                # Raw user-supplied severity (per-plugin or global), before the
+                # built-in default fills in. None when the user set nothing.
+                "user_specified_severity": self.severity or None,
             },
             severity=self.severity or PLUGIN_SEVERITY.get(self.id, ""),
             frameworks=PLUGIN_FRAMEWORKS.get(self.id, []),
@@ -370,12 +407,14 @@ class DatasetPlugin:
         severity: str = "",
         sample: bool = True,
         seed: int | None = None,
+        strategies: list | None = None,
     ) -> None:
         self.id = plugin_id
         self.detector_id = detector_id
         self.purpose = purpose
         self.severity = severity
         self.sample = sample
+        self.strategies = strategies or []  # per-plugin strategies (mirrors RedteamPlugin)
 
         path = Path(dataset_path)
         if not path.exists():
@@ -407,6 +446,9 @@ class DatasetPlugin:
                         "purpose": self.purpose,
                         "source": "dataset",
                         "dataset_id": self.id,
+                        # Raw user-supplied severity, before the built-in default
+                        # fills in. None when the user set nothing.
+                        "user_specified_severity": self.severity or None,
                     },
                     severity=self.severity or PLUGIN_SEVERITY.get(plugin_id, ""),
                     frameworks=PLUGIN_FRAMEWORKS.get(plugin_id, []),

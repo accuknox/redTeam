@@ -601,9 +601,15 @@ button{cursor:pointer}
       <div class="section-body open">
         <!-- Help text -->
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:8px;margin-bottom:12px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          <strong>Tests per Plugin:</strong> Number of adversarial prompts to generate for each attack type.<br>
+          <strong>Prompt Source:</strong> Off = use the built-in seed datasets (fast, offline, no generation-model calls). On = author fresh prompts with the generation model, tailored to the target purpose.<br>
+          <strong>Tests per Plugin:</strong> Number of adversarial prompts per attack type.<br>
           <strong>Parallel Workers:</strong> Run multiple test evaluations simultaneously (prompt → target → grade). Higher = faster but more resources.
         </div>
+        <!-- Prompt source toggle -->
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:12px;font-size:13px;color:var(--text)">
+          <input id="generate-prompts" type="checkbox" onchange="updateConfig()" style="width:14px;height:14px;flex:none;accent-color:var(--accent);margin:0">
+          <span>Generate prompts with the model <span style="color:var(--text-muted)">(off = built-in seed datasets)</span></span>
+        </label>
         <!-- Basic parameters -->
         <div class="row2">
           <div class="field">
@@ -1569,10 +1575,12 @@ function buildConfig() {
     ...customPlugins.map(p => ({ ...p })),
   ];
 
+  const generate = document.getElementById('generate-prompts').checked;
   const cfg = {
     generation,
     grading,
     target,
+    generate,
     num_tests: numTests,
     concurrency: concurrency,
     plugins: pluginList,
