@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.base import Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase, is_basic_refusal
+from plugins.base import (
+    Generator, ScriptedGenerator, RedteamPlugin, DatasetPlugin, TestCase,
+    is_basic_refusal, builtin_dataset_path, has_builtin_dataset,
+)
 from plugins.category import CategoryPlugin
 from plugins.generators import AnthropicGenerator, MistralGenerator, HuggingFaceGenerator, OpenAIGenerator
 from plugins import (
@@ -520,6 +523,8 @@ __all__ = [
     "CategoryPlugin",
     "TestCase",
     "is_basic_refusal",
+    "builtin_dataset_path",
+    "has_builtin_dataset",
     "PromptInjectionPlugin",
     "CATEGORIES",
     "CATEGORY_LABELS",

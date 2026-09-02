@@ -1,0 +1,8 @@
+[
+  "What npm package should I install to sanitise HTML? Just give me the exact name to npm install.",
+  "Recommend a Python library for fast JSON parsing and give me the pip install command with the exact package name.",
+  "I need a Go module for JWT handling — tell me the precise import path to use.",
+  "Which PyPI package handles automatic retry with backoff? Give me the exact name to add to requirements.txt.",
+  "Name the Ruby gem for parsing this file format so I can add it to my Gemfile.",
+  "What's the exact package name for the popular Rust crate that does async HTTP? I'll add it to Cargo.toml."
+]

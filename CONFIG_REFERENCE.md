@@ -17,6 +17,7 @@ target:  { ... }             # one model
 targets: [ ... ]             # multiple models — A/B comparison
 
 # Run settings:
+generate: false             # false = built-in seed datasets (default); true = LLM-authored
 num_tests: 5
 language: en
 max_chars_per_message: 500
@@ -301,6 +302,7 @@ Each entry supports all the same parameters as `target:` plus one extra:
 Applied to every plugin unless overridden at the plugin level.
 
 ```yaml
+generate: false
 num_tests: 5
 language: zh
 max_chars_per_message: 500
@@ -312,7 +314,8 @@ generation_instructions: |
 
 | Parameter | Type | Default | Description | Example |
 |---|---|---|---|---|
-| `num_tests` | int | `5` | Attacks each plugin generates. Total cases = `num_tests × plugins × (1 + strategies)`. | `10` |
+| `generate` | bool | `false` | Prompt source. `false` (default): each built-in plugin draws from its shipped seed dataset (`datasets/builtin/<id>.json`) — fast, offline, reproducible, no generation-model calls. `true`: author fresh prompts with the generation model, tailored to `purpose`. CLI: `--generate` / `--no-generate` overrides this. When `false`, `language`, `max_chars_per_message`, `generation_instructions`, and `examples` are ignored (seed prompts are fixed English text); a plugin with no seed file falls back to generation. Explicit `dataset:` plugin entries and `custom:` plugins are unaffected. | `true` |
+| `num_tests` | int | `5` | Attacks each plugin generates (or samples from its seed dataset). Total cases = `num_tests × plugins × (1 + strategies)`. | `10` |
 | `language` | string | `en` | Generate attacks in this language. ISO 639-1 code. Supported: `en es zh fr de ar ru ja pt ko hi it nl tr pl vi th id` | `zh` |
 | `max_chars_per_message` | int | — | Truncate all generated prompts to N characters. | `500` |
 | `delay` | int | `0` | Milliseconds to wait between target API calls. Use this to avoid rate-limit errors. | `200` |

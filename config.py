@@ -29,7 +29,9 @@ from plugins import (
     MistralGenerator,
     OpenAIGenerator,
     RedteamPlugin,
+    builtin_dataset_path,
     get_plugin,
+    has_builtin_dataset,
     is_known_plugin_entry,
     resolve_plugin_ids,
 )
@@ -198,12 +200,22 @@ class RedTeamConfig:
     raw: dict[str, Any]
     target: Provider | None = None
     targets: list[Provider] = field(default_factory=list)  # all targets; len>1 = multi-target run
-    save_prompts: str | None = None   # path to write generated prompts JSONL
-    load_prompts: str | None = None   # path to read cached prompts JSONL
+    save_prompts: str | None = None   # path to write generated prompts JSON
+    load_prompts: str | None = None   # path to read cached prompts JSON
+    generate: bool = False            # True: LLM-author prompts; False: use built-in seed datasets
 
 
-def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
-    """Load and wire a `RedTeamConfig` from a YAML or JSON file."""
+def load_config(
+    path: "str | Path" = DEFAULT_CONFIG_PATH,
+    *,
+    generate: bool | None = None,
+) -> RedTeamConfig:
+    """Load and wire a `RedTeamConfig` from a YAML or JSON file.
+
+    `generate` overrides the config file's `generate:` flag (used by the CLI's
+    --generate / --no-generate). When generation is off, each built-in plugin
+    draws its prompts from `datasets/builtin/<id>.json` instead of the LLM.
+    """
     data = yaml.safe_load(Path(path).read_text())
 
     # purpose: top-level key takes precedence; falls back to target.purpose for
@@ -241,12 +253,56 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
     )
     concurrency = int(data.get("concurrency", 1 if _uses_in_process_model else 4))
 
+    # Prompt source: generate with the LLM, or draw from the built-in seed
+    # datasets. Default is dataset-backed (fast, offline, reproducible); flip it
+    # with `generate: true` in the config or the CLI's --generate flag.
+    do_generate: bool = bool(data.get("generate", False)) if generate is None else generate
+
     # Global options injected into every plugin's meta-prompt.
     global_instructions: str = data.get("generation_instructions", "") or ""
     global_language: str = data.get("language", "") or ""
     global_max_chars: int = int(data.get("max_chars_per_message", 0) or 0)
     global_severity: str = str(data.get("severity", "") or "")
     global_examples: str = str(data.get("examples", "") or "")
+
+    # When generation is off but a language is requested, the static seed prompts
+    # are English-only — warn once so the mismatch isn't silent.
+    if not do_generate and global_language:
+        print(f"WARNING: language={global_language!r} is ignored when generate is off "
+              f"(built-in seed prompts are English); set generate: true to author "
+              f"prompts in {global_language!r}.")
+
+    def _build_plugin(
+        pid: str, *, num_tests: int, severity: str, examples: str,
+        instructions: str, language: str, max_chars: int, strategies: list,
+    ) -> "RedteamPlugin | DatasetPlugin":
+        """Build one built-in plugin: LLM-generated, or seeded from its dataset.
+
+        Falls back to LLM generation when generation is on, or when the plugin
+        has no shipped seed file (e.g. a newly added plugin).
+        """
+        if not do_generate and has_builtin_dataset(pid):
+            return DatasetPlugin(
+                dataset_path=builtin_dataset_path(pid),
+                detector_id=pid,
+                purpose=purpose,
+                category_column=None,   # per-plugin file — do not re-route by category
+                num_tests=num_tests,
+                plugin_id=pid,
+                severity=severity,
+                strategies=strategies,
+            )
+        return get_plugin(
+            pid, generation, purpose,
+            num_tests=num_tests,
+            severity=severity,
+            examples=examples or None,
+            generation_instructions=instructions,
+            language=language,
+            max_chars=max_chars,
+            concurrency=concurrency,
+            strategies=strategies,
+        )
 
     # `plugins` entries may be:
     #   - a string: plugin id or category key (expanded to all sub-plugins)
@@ -261,14 +317,14 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
             # String form — expand frameworks/categories and use all global defaults.
             for pid in resolve_plugin_ids([entry]):
                 plugins.append(
-                    get_plugin(pid, generation, purpose,
-                               num_tests=num_tests,
-                               severity=global_severity,
-                               examples=global_examples or None,
-                               generation_instructions=global_instructions,
-                               language=global_language,
-                               max_chars=global_max_chars,
-                               concurrency=concurrency)
+                    _build_plugin(pid,
+                                  num_tests=num_tests,
+                                  severity=global_severity,
+                                  examples=global_examples,
+                                  instructions=global_instructions,
+                                  language=global_language,
+                                  max_chars=global_max_chars,
+                                  strategies=[])
                 )
 
         elif isinstance(entry, dict) and "id" in entry:
@@ -335,15 +391,14 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
                     # A category/framework key in `id` expands to all its sub-plugins.
                     for pid in resolve_plugin_ids([pid_or_cat]):
                         plugins.append(
-                            get_plugin(pid, generation, purpose,
-                                       num_tests=per_num,
-                                       severity=per_sev,
-                                       examples=per_ex or None,
-                                       generation_instructions=per_instr,
-                                       language=per_lang,
-                                       max_chars=per_max_chars,
-                                       concurrency=concurrency,
-                                       strategies=per_strats)
+                            _build_plugin(pid,
+                                          num_tests=per_num,
+                                          severity=per_sev,
+                                          examples=per_ex,
+                                          instructions=per_instr,
+                                          language=per_lang,
+                                          max_chars=per_max_chars,
+                                          strategies=per_strats)
                         )
 
         elif isinstance(entry, dict) and "dataset" in entry:
@@ -407,4 +462,5 @@ def load_config(path: "str | Path" = DEFAULT_CONFIG_PATH) -> RedTeamConfig:
         targets=targets,
         save_prompts=data.get("save_prompts") or None,
         load_prompts=data.get("load_prompts") or None,
+        generate=do_generate,
     )

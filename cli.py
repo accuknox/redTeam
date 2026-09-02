@@ -30,7 +30,11 @@ from pathlib import Path
 from config import load_config
 from detectors import all_detector_ids, get_detector
 from inference import CallableProvider, RestProvider
-from plugins import CATEGORIES, _REGISTRY, all_plugin_ids, category_for_plugin, get_plugin, resolve_plugin_ids
+from plugins import (
+    CATEGORIES, DatasetPlugin, PLUGIN_SEVERITY, _REGISTRY, all_plugin_ids,
+    builtin_dataset_path, category_for_plugin, get_plugin, has_builtin_dataset,
+    resolve_plugin_ids,
+)
 from strategies import _REGISTRY as _STRATEGY_REGISTRY, get_strategy
 
 #: Detector ids with a dedicated grader, resolved once at import.
@@ -140,11 +144,25 @@ examples:
     cache = p.add_argument_group("prompts cache")
     cache.add_argument(
         "--save-prompts", default=None, metavar="PATH",
-        help="save generated prompts (post-strategy) to a JSONL file for reuse across runs",
+        help="save generated prompts (post-strategy) to a JSON file for reuse across runs",
     )
     cache.add_argument(
         "--load-prompts", default=None, metavar="PATH",
-        help="load prompts from a saved JSONL file; skips generation for cached plugins/strategies, tops up missing ones",
+        help="load prompts from a saved JSON file; skips generation for cached plugins/strategies, tops up missing ones",
+    )
+    cache.add_argument(
+        "--generate-only", action="store_true",
+        help="generate prompts + strategy variants, write them to the save-prompts file, then exit "
+             "WITHOUT hitting the target (no target required). Reuse later with --load-prompts.",
+    )
+    gen = p.add_argument_group("prompt source")
+    gen.add_argument(
+        "--generate", dest="generate", action="store_true", default=None,
+        help="author prompts with the generation model (default: use built-in seed datasets)",
+    )
+    gen.add_argument(
+        "--no-generate", dest="generate", action="store_false",
+        help="use the built-in seed datasets instead of the generation model",
     )
 
     return p
@@ -296,7 +314,8 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     # --- load config and apply CLI overrides ----------------------------------
-    cfg = load_config(args.config) if args.config else load_config()
+    cfg = (load_config(args.config, generate=args.generate) if args.config
+           else load_config(generate=args.generate))
 
     if args.purpose:
         cfg.purpose = args.purpose
@@ -308,11 +327,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.plugins:
         entries = [e.strip() for e in args.plugins.split(",")]
         plugin_ids = resolve_plugin_ids(entries)
-        cfg.plugins = [
-            get_plugin(pid, cfg.generation, cfg.purpose,
-                       num_tests=cfg.num_tests, concurrency=cfg.concurrency)
-            for pid in plugin_ids
-        ]
+
+        def _cli_plugin(pid: str):
+            # Mirror config's source choice: seed dataset unless generation is on.
+            if not cfg.generate and has_builtin_dataset(pid):
+                return DatasetPlugin(
+                    dataset_path=builtin_dataset_path(pid),
+                    detector_id=pid, purpose=cfg.purpose,
+                    category_column=None, num_tests=cfg.num_tests,
+                    plugin_id=pid,
+                )
+            return get_plugin(pid, cfg.generation, cfg.purpose,
+                              num_tests=cfg.num_tests, concurrency=cfg.concurrency)
+
+        cfg.plugins = [_cli_plugin(pid) for pid in plugin_ids]
 
     if args.strategies:
         cfg.strategies = [
@@ -356,6 +384,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif cfg.targets:
         target = cfg.targets[0]   # single-target path — use first (and only) target
+    elif args.generate_only:
+        target = None             # generate-only never hits the target — none needed
     else:
         parser.error(
             "no target configured — use --target-type rest|openai|function "
@@ -371,6 +401,10 @@ def main(argv: list[str] | None = None) -> None:
     # CLI flag takes priority over config file value for both prompts flags.
     save_prompts_path = args.save_prompts or cfg.save_prompts
     load_prompts_path = args.load_prompts or cfg.load_prompts
+
+    # Generate-only must produce a file to be useful; default one if unset.
+    if args.generate_only and not save_prompts_path:
+        save_prompts_path = f"prompts_{datetime.now().strftime('%Y%m%dT%H%M%S')}.json"
 
     # --- load prompts from file -----------------------------------------------
     # file_cases: plugin_id → all TestCases in the file (base + strategy variants)
@@ -399,14 +433,18 @@ def main(argv: list[str] | None = None) -> None:
     print(f"\nknox-rt  |  AccuKnox Red Team")
     print("=" * 50)
     print(f"Run ID          : {run_id}")
-    print(f"Output          : {out_file}  [{fmt.upper()}]")
+    if args.generate_only:
+        print(f"Mode            : generate-only (no target will be hit)")
+    else:
+        print(f"Output          : {out_file}  [{fmt.upper()}]")
     if is_multi:
         print(f"Targets         : {', '.join(t.name for t in cfg.targets)}")
-    else:
+    elif target is not None:
         print(f"Target          : {target.name}")
     print(f"Target purpose  : {cfg.purpose}")
     print(f"Generation model: {cfg.generation.name}")
     print(f"Grading model   : {cfg.grading.name}")
+    print(f"Prompt source   : {'LLM generation' if cfg.generate else 'built-in seed datasets'}")
     print(f"Tests/plugin      : {cfg.num_tests}")
     print(f"Concurrency     : {cfg.concurrency}")
     if cfg.strategies:
@@ -573,6 +611,20 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(f"Prompts  → {save_path}")
 
+    # --- generate-only: stop here, no target is hit --------------------------
+    if args.generate_only:
+        n_convo = sum(
+            1 for tc in all_save_cases
+            if (tc.metadata.get("strategy") or "") in interactive_strategies
+        )
+        convo_note = (
+            f" ({n_convo} conversational seed(s) — turns are built at run time on --load-prompts)"
+            if n_convo else ""
+        )
+        print(f"\nGenerate-only complete: {len(all_save_cases)} prompt(s) saved{convo_note}.")
+        print(f"Reuse with:  knox-rt --config <cfg> --load-prompts {save_path}")
+        return
+
     # --- attack + grade -------------------------------------------------------
     all_records: list[dict] = []
     total = 0
@@ -609,7 +661,8 @@ def main(argv: list[str] | None = None) -> None:
                         "plugin_id": case.plugin_id, "detector_id": case.detector_id,
                         "category": cat_key, "category_label": cat_label,
                         "strategy": strategy, "attack": case.prompt,
-                        "severity": case.severity or None,
+                        "severity": PLUGIN_SEVERITY.get(case.plugin_id) or PLUGIN_SEVERITY.get(case.detector_id) or None,
+                        "user_specified_severity": case.metadata.get("user_specified_severity"),
                         "frameworks": case.frameworks or None,
                         "controls": case.controls or None,
                         "response": None, "passed": None, "score": None,
@@ -712,7 +765,11 @@ def main(argv: list[str] | None = None) -> None:
                 "objective": objective,
                 "frameworks": case.frameworks or None,
                 "controls": case.controls or None,
-                "severity": case.severity or None,
+                # `severity` is always our built-in default for the attack type;
+                # `user_specified_severity` carries the user's per-plugin/global
+                # override when they set one, else null.
+                "severity": PLUGIN_SEVERITY.get(case.plugin_id) or PLUGIN_SEVERITY.get(case.detector_id) or None,
+                "user_specified_severity": case.metadata.get("user_specified_severity"),
                 "strategy": strategy,
                 # For a multi-turn case this is the attack that actually landed,
                 # which may be several refinements past the seed prompt.
