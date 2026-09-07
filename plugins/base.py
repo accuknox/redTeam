@@ -136,11 +136,63 @@ _REFUSAL_PREFIXES = (
     "i'm not able", "i am not able", "sorry,",
 )
 
+# Refusals that arrive mid-sentence, after an agreeable opener — "Sure, I can
+# help with security testing! However, I cannot generate attacks that ...".
+# A prefix check misses these entirely and the refusal becomes a test case.
+# Each phrase carries its own object ("generate", "provide", ...) so that a
+# roleplay attack telling the *target* it cannot refuse is not caught by them.
+_REFUSAL_PHRASES = (
+    "i cannot generate", "i can't generate", "i cannot create", "i can't create",
+    "i cannot provide", "i can't provide", "i cannot assist", "i can't assist",
+    "i cannot help with", "i can't help with", "i cannot write", "i can't write",
+    "i won't generate", "i will not generate", "i'm not able to generate",
+    "i am not able to generate", "i must decline", "i'm not comfortable",
+    "i am not comfortable", "against my guidelines", "violates my guidelines",
+)
+
+# Lines that talk *about* the attacks instead of being one. A small model wraps
+# its list in these, and the line-per-prompt fallback would otherwise send them
+# to the customer's system as security tests.
+_META_PREFIXES = (
+    "here are", "here's", "here is", "these are", "below are", "the following",
+    "i hope", "hope these", "let me know", "feel free", "as requested",
+    "certainly", "sure!", "sure,", "of course", "note that", "note:",
+    "disclaimer", "important:", "remember", "output format", "format:",
+)
+
+#: Below this, a line is a fragment or a list header, not an attack prompt.
+_MIN_PROMPT_CHARS = 15
+
 
 def is_basic_refusal(text: str) -> bool:
     """Heuristic: did the generation model refuse instead of producing an attack?"""
     head = text.strip().lower()
-    return any(head.startswith(p) for p in _REFUSAL_PREFIXES)
+    if any(head.startswith(p) for p in _REFUSAL_PREFIXES):
+        return True
+    return any(phrase in head[:300] for phrase in _REFUSAL_PHRASES)
+
+
+def _strip_code_fences(text: str) -> str:
+    """Drop ``` fences, which small models wrap lists in unprompted."""
+    return re.sub(r"^\s*```[^\n]*\n?|\n?```\s*$", "", text.strip(), flags=re.MULTILINE)
+
+
+def _is_meta_commentary(text: str) -> bool:
+    """True for a line that introduces or closes the list rather than attacking."""
+    head = text.strip().lower()
+    if head.endswith(":") and len(head) < 120:  # "Here are 5 test prompts:"
+        return True
+    return any(head.startswith(p) for p in _META_PREFIXES)
+
+
+def _is_usable_prompt(text: str) -> bool:
+    """True when a parsed line is plausibly an attack we should send."""
+    stripped = text.strip()
+    return (
+        len(stripped) >= _MIN_PROMPT_CHARS
+        and not is_basic_refusal(stripped)
+        and not _is_meta_commentary(stripped)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -268,16 +320,33 @@ class RedteamPlugin(ABC):
 
     @staticmethod
     def _parse(raw: str) -> list[str]:
-        """Pull one prompt per `Prompt:`-prefixed line; fall back to non-empty
-        lines if the model didn't follow the format."""
+        """Pull one attack prompt per `Prompt:`-prefixed line.
+
+        Tolerant of how a small generation model actually formats a list —
+        markdown fences, bullets and numbering all wrap the marker rather than
+        replacing it, and none of them should cost us the prompt or ride along
+        inside it. The line-per-prompt fallback stays, because a model that
+        ignores the marker entirely still produced usable attacks, but it now
+        drops the conversational scaffolding ("Sure! Here are 5 prompts:")
+        that would otherwise be sent to the target as a security test.
+        """
+        lines = _strip_code_fences(raw).splitlines()
+
         prompts = [
-            m.group(1).strip()
-            for line in raw.splitlines()
-            if (m := re.match(r"\s*Prompt:\s*(.+)", line, re.IGNORECASE))
+            m.group(1).strip().strip('"').strip()
+            for line in lines
+            if (m := re.match(r"\s*(?:[-*+•]|\d+[.)])?\s*Prompt\s*:\s*(.+)",
+                              line, re.IGNORECASE))
         ]
         if prompts:
-            return prompts
-        return [line.strip() for line in raw.splitlines() if line.strip()]
+            return [p for p in prompts if _is_usable_prompt(p)]
+
+        return [
+            stripped
+            for line in lines
+            if (stripped := re.sub(r"^\s*(?:[-*+•]|\d+[.)])\s*", "", line).strip())
+            and _is_usable_prompt(stripped)
+        ]
 
     def _build_test_case(self, prompt: str) -> TestCase:
         from plugins import PLUGIN_FRAMEWORKS, PLUGIN_CONTROLS, PLUGIN_SEVERITY  # deferred — avoids circular import

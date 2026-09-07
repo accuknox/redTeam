@@ -70,6 +70,33 @@ examples:
         "--list-strategies", action="store_true",
         help="list all available strategy ids, then exit",
     )
+    disc.add_argument(
+        "--check-judge", action="store_true",
+        help=(
+            "score the configured grading model against the calibration corpus, "
+            "then exit — no attacks are sent to the target. Answers 'can this "
+            "model be trusted to grade, and on which plugins'. Prints a text "
+            "report; add -o FILE for JSON, or -o - for JSON on stdout. Exit code "
+            "is non-zero on any miss, so it works as a CI gate"
+        ),
+    )
+    disc.add_argument(
+        "--samples", type=int, default=1, metavar="N",
+        help=(
+            "grade each calibration case N times and take the majority "
+            "(--check-judge only). Judge models are not reliably reproducible "
+            "even at temperature 0, so N=1 reports sampling noise as if it were "
+            "the judge's ability; N=3 separates 'consistently wrong' from "
+            "'a coin flip' [default: 1]"
+        ),
+    )
+    disc.add_argument(
+        "--cases", metavar="FILE",
+        help=(
+            "extra calibration transcripts for --check-judge (JSON). Same shape as "
+            "the config's 'calibration' block, for a corpus kept outside any one config"
+        ),
+    )
 
     run = p.add_argument_group("run")
     run.add_argument(
@@ -94,8 +121,9 @@ examples:
     )
     run.add_argument(
         "--concurrency", type=int, default=None, metavar="N",
-        help="cases to run at once (default 4; 1 for in-process huggingface "
-             "models). Raise for higher provider rate limits, lower on HTTP 429.",
+        help="cases to run at once (default 4 for a scan, 3 for --check-judge; "
+             "1 for in-process huggingface models). Raise for higher provider "
+             "rate limits, lower on HTTP 429 (rate limits are also auto-retried).",
     )
 
     tgt = p.add_argument_group("target (system under test)")
@@ -171,6 +199,67 @@ examples:
 # --------------------------------------------------------------------------- #
 # Discovery commands
 # --------------------------------------------------------------------------- #
+
+def _check_judge(cfg, cases_path: str | None, output_path: str | None,
+                 samples: int = 1, concurrency: int = 3) -> int:
+    """Score `cfg.grading` against the calibration corpus. Returns an exit code.
+
+    The shipped artefact is a single binary, so this cannot live only behind
+    `python -m detectors.calibration` — a customer has no interpreter to run
+    that with, and a judge nobody can score is a judge nobody checks.
+
+    With `--output` the result is written as JSON instead of the text report
+    (`-o -` writes it to stdout), so a CI job or a dashboard can consume it.
+    """
+    from detectors.calibration import (
+        CASES, cases_from, run_corpus, summarize, to_dict, _print_report,
+    )
+
+    to_stdout = output_path == "-"
+    quiet = to_stdout  # nothing but JSON may go to stdout in that mode
+
+    cases = list(CASES)
+    for label, spec in (("the config's 'calibration' block", cfg.calibration),
+                        (cases_path, cases_path)):
+        if not spec:
+            continue
+        try:
+            extra = cases_from(spec)
+        except (OSError, ValueError) as exc:
+            print(f"could not load cases from {label}: {exc}", file=sys.stderr)
+            return 2
+        cases += extra
+        if not quiet:
+            print(f"loaded {len(extra)} case(s) from {label}")
+
+    judge_name = getattr(cfg.grading, "name", "?")
+    if not quiet:
+        print(f"Scoring grading model: {judge_name}\n")
+    if not quiet:
+        print(f"Grading {len(cases)} case(s) x {samples} sample(s) "
+              f"at concurrency {concurrency}…")
+    outcomes = run_corpus(judge_factory=lambda _case: cfg.grading, cases=cases,
+                          samples=samples, concurrency=concurrency)
+    summary = summarize(outcomes)
+
+    if output_path:
+        payload = json.dumps(
+            to_dict(outcomes, summary, judge_name=judge_name),
+            indent=2, ensure_ascii=False,
+        )
+        if to_stdout:
+            print(payload)
+        else:
+            Path(output_path).write_text(payload + "\n", encoding="utf-8")
+            print(f"Judge calibration → {output_path}")
+            print(f"  {summary['correct']}/{summary['cases']} correct  "
+                  f"({summary['false_positives']} false positive(s), "
+                  f"{summary['false_negatives']} false negative(s))")
+    else:
+        _print_report(outcomes, summary, f"live ({judge_name})")
+        print()
+    return 0 if summary["correct"] == summary["cases"] else 1
+
 
 def _list_plugins() -> None:
     print("knox-rt — available plugins\n" + "=" * 50)
@@ -324,6 +413,25 @@ def main(argv: list[str] | None = None) -> None:
     if args.concurrency:
         cfg.concurrency = args.concurrency
 
+    # Score the grading model and stop. Deliberately after the config load, so it
+    # scores exactly the judge a real run would use, and deliberately before any
+    # plugin or target work, since no attack is sent to the target here.
+    if args.check_judge:
+        # --concurrency defaults to None for a run; the judge check wants a
+        # sensible parallel default of its own since every case is independent.
+        raise SystemExit(_check_judge(
+            cfg, args.cases, args.output, args.samples,
+            concurrency=args.concurrency or 3))
+
+    # A real run needs both models. They are optional in the config so that
+    # --check-judge can run with only a `grading` block, so a normal run must
+    # say plainly which one is missing rather than crash deep in the pipeline.
+    if cfg.grading is None:
+        parser.error("config has no 'grading' block — a run needs a grading model")
+    if cfg.generation is None and cfg.generate:
+        parser.error("config has no 'generation' block — needed with --generate / "
+                     "generate: true; use built-in seed datasets instead, or add one")
+
     if args.plugins:
         entries = [e.strip() for e in args.plugins.split(",")]
         plugin_ids = resolve_plugin_ids(entries)
@@ -442,7 +550,7 @@ def main(argv: list[str] | None = None) -> None:
     elif target is not None:
         print(f"Target          : {target.name}")
     print(f"Target purpose  : {cfg.purpose}")
-    print(f"Generation model: {cfg.generation.name}")
+    print(f"Generation model: {cfg.generation.name if cfg.generation else '(none — seed datasets only)'}")
     print(f"Grading model   : {cfg.grading.name}")
     print(f"Prompt source   : {'LLM generation' if cfg.generate else 'built-in seed datasets'}")
     print(f"Tests/plugin      : {cfg.num_tests}")
@@ -478,6 +586,35 @@ def main(argv: list[str] | None = None) -> None:
                 f"model judges attacks it authored, especially inside the adaptive "
                 f"loop. Point grading at a different model."
             )
+    # Does the grading model actually work? The self-judging checks above are
+    # about the run's *setup*; this one is about the grader's *behaviour*, which
+    # is the thing that silently decides every verdict in the report. Four
+    # transcripts whose correct answer is unarguable — two that must not be
+    # findings, two that must be. A judge stuck on one verdict fails them and is
+    # caught here, before the scan spends anything.
+    if cfg.check_judge:
+        from detectors.calibration import smoke_check
+
+        print("Checking grading model…", end=" ", flush=True)
+        try:
+            misses = smoke_check(cfg.grading)
+        except Exception as exc:  # noqa: BLE001 — a broken judge must not abort setup
+            print("could not run")
+            warnings.append(
+                f"the grading model could not be reached for a preflight check "
+                f"({type(exc).__name__}: {str(exc)[:120]}). Verdicts in this run "
+                f"are unverified."
+            )
+        else:
+            print(f"{4 - len(misses)}/4 correct")
+            for o in misses:
+                got = {True: "resisted", False: "violated", None: "no verdict"}[o.actual_passed]
+                warnings.append(
+                    f"grading model got '{o.case.id}' wrong (said {got}) — {o.case.why} "
+                    f"Findings from this run may not be trustworthy; score it with "
+                    f"`python -m detectors.calibration --config <cfg>`."
+                )
+
     if warnings:
         print("⚠ preflight warnings (run continues):")
         for w in warnings:
@@ -798,7 +935,11 @@ def main(argv: list[str] | None = None) -> None:
                 "seq":       seq,
                 "plugin_id": plugin_id,
                 "target":    tgt.name,
-                "verdict":   "RESISTED " if result.passed else "VULNERABLE",
+                # None = the judge returned no readable verdict. It shares the
+                # ERROR lane with transport failures: counted by neither side.
+                "verdict":   ("ERROR     " if result.passed is None
+                              else "RESISTED " if result.passed
+                              else "VULNERABLE"),
                 "sev_tag":   sev_tag,
                 "strat_tag": strat_tag,
                 "passed":    result.passed,

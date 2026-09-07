@@ -193,8 +193,8 @@ class RedTeamConfig:
     num_tests: int
     concurrency: int
     delay_ms: int
-    generation: Generator
-    grading: Judge
+    generation: Generator | None
+    grading: Judge | None
     plugins: list[RedteamPlugin]
     strategies: list[Strategy]
     raw: dict[str, Any]
@@ -203,6 +203,15 @@ class RedTeamConfig:
     save_prompts: str | None = None   # path to write generated prompts JSON
     load_prompts: str | None = None   # path to read cached prompts JSON
     generate: bool = False            # True: LLM-author prompts; False: use built-in seed datasets
+    # Preflight judge check. On by default: a grading model stuck on one verdict
+    # turns a whole run into fabricated findings or silent misses, and costs four
+    # calls to catch. Set `check_judge: false` to skip it.
+    check_judge: bool = True
+    # Extra calibration transcripts for *your* domain — a list of case objects,
+    # or a path to a JSON file of them. Lives in the run config so the judge is
+    # calibrated on the same system the run is about. See
+    # `detectors.calibration.load_cases` for the shape.
+    calibration: Any = None
 
 
 def load_config(
@@ -230,8 +239,12 @@ def load_config(
     num_tests = int(data.get("num_tests", data.get("num_generations", 5)))
     delay_ms = int(data.get("delay", 0) or 0)
 
-    generation = build_generator(data["generation"])
-    grading = build_judge(data["grading"])
+    # Generation is not needed by every entry point — `--check-judge` scores the
+    # grader and never authors an attack — so a missing `generation` block is not
+    # fatal here. It surfaces only if something actually tries to generate, where
+    # `cfg.generation` is None and the caller reports it in context.
+    generation = build_generator(data["generation"]) if data.get("generation") else None
+    grading = build_judge(data["grading"]) if data.get("grading") else None
 
     # Concurrency default. A case is two network calls in sequence, and both are
     # spent waiting on a remote API rather than working, so running several at
@@ -463,4 +476,6 @@ def load_config(
         save_prompts=data.get("save_prompts") or None,
         load_prompts=data.get("load_prompts") or None,
         generate=do_generate,
+        check_judge=bool(data.get("check_judge", True)),
+        calibration=data.get("calibration"),
     )
