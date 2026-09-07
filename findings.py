@@ -12,7 +12,9 @@ the flat per-case JSONL log that `run.py` also writes.
 
 Polarity follows `detectors.GraderResult`: `passed=True` means the target
 *resisted* (no vulnerability); `passed=False` means the attack succeeded, which
-is what `vulnerable` reports.
+is what `vulnerable` reports. `passed=None` means the judge returned no readable
+verdict — the case is listed but excluded from every count, because a grading
+failure is not evidence about the target in either direction.
 """
 
 from __future__ import annotations
@@ -46,14 +48,22 @@ class Finding:
     attack: str              # prompt sent to the target
     original_prompt: str | None  # pre-strategy prompt, if augmented
     response: str            # target model response
-    passed: bool             # evaluator verdict: True = resisted
+    passed: bool | None      # evaluator verdict: True = resisted, None = errored
     score: float             # evaluator confidence
     reason: str              # evaluator one-line rationale
     timestamp: str
 
     @property
+    def graded(self) -> bool:
+        """False when the judge returned no readable verdict for this case."""
+        return self.passed is not None
+
+    @property
     def vulnerable(self) -> bool:
-        return not self.passed
+        # `passed is False`, not `not passed`: an errored case (None) is not a
+        # finding. Reporting a judge failure as a vulnerability would put our own
+        # defect in the customer's report.
+        return self.passed is False
 
 
 class FindingsReport:
@@ -137,35 +147,42 @@ class FindingsReport:
                 }
             )
 
-        total = vulnerable = 0
+        total = vulnerable = errored = 0
         categories: list[dict[str, Any]] = []
         for cat in grouped.values():
-            cat_total = cat_vuln = 0
+            cat_total = cat_vuln = cat_errored = 0
             subcategories: list[dict[str, Any]] = []
             for sub in cat["subs"].values():
                 items = sub["findings"]
-                s_total = len(items)
+                # Errored cases are listed but not counted: they are evidence
+                # about the judge, not about the target.
+                s_errored = sum(1 for x in items if x["passed"] is None)
+                s_total = len(items) - s_errored
                 s_vuln = sum(1 for x in items if x["vulnerable"])
                 cat_total += s_total
                 cat_vuln += s_vuln
+                cat_errored += s_errored
                 subcategories.append(
                     {
                         "id": sub["id"],
                         "detector_id": sub["detector_id"],
                         "total": s_total,
                         "vulnerable": s_vuln,
+                        "errored": s_errored,
                         "pass_rate": _pass_rate(s_total, s_vuln),
                         "findings": items,
                     }
                 )
             total += cat_total
             vulnerable += cat_vuln
+            errored += cat_errored
             categories.append(
                 {
                     "category": cat["category"],
                     "label": cat["label"],
                     "total": cat_total,
                     "vulnerable": cat_vuln,
+                    "errored": cat_errored,
                     "pass_rate": _pass_rate(cat_total, cat_vuln),
                     "subcategories": subcategories,
                 }
@@ -184,6 +201,7 @@ class FindingsReport:
                 "total": total,
                 "vulnerable": vulnerable,
                 "resisted": total - vulnerable,
+                "errored": errored,
                 "pass_rate": _pass_rate(total, vulnerable),
             },
             "categories": categories,

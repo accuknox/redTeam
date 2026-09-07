@@ -27,11 +27,19 @@ from abc import ABC, abstractmethod
 from collections import deque
 from typing import Any, Iterable
 
+from detectors.schema import JSON_OBJECT_FORMAT as _JSON_OBJECT
+
 
 class Judge(ABC):
     """LLM-as-a-judge model. Subclass and implement `evaluate()`."""
 
     name: str = "judge"
+
+    #: True when this backend can be asked for schema-constrained output, i.e.
+    #: `evaluate()` accepts a `response_format` keyword. Callers check this flag
+    #: rather than inspecting the signature, so a user-defined `Judge` written
+    #: against the original one-argument `evaluate()` keeps working untouched.
+    supports_schema: bool = False
 
     @abstractmethod
     def evaluate(self, prompt: str) -> str:
@@ -103,6 +111,8 @@ class MistralJudge(Judge):
     pass through to `chat.complete`.
     """
 
+    supports_schema = True
+
     def __init__(
         self,
         model: str = "mistral-large-latest",
@@ -128,24 +138,43 @@ class MistralJudge(Judge):
         self.system = system
         self.params = params
         self._client = client or Mistral(api_key=api_key or os.environ.get("MISTRAL_API_KEY"))
+        # Flipped off permanently on the first rejection — see LocalJudge.
+        self._schema_supported = True
 
-    def evaluate(self, prompt: str) -> str:
+    def evaluate(self, prompt: str, *, response_format: dict | None = None) -> str:
         messages = []
         if self.system is not None:
             messages.append({"role": "system", "content": self.system})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._client.chat.complete(
-            model=self.model,
-            messages=messages,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            **self.params,
-        )
-        content = response.choices[0].message.content
+        # Mistral takes `{"type": "json_object"}` across its range, including the
+        # small models; a full json_schema is not universally available, so the
+        # weaker constraint is used. It still removes fences and prose, which is
+        # where most small-model grading failures come from.
+        want_json = response_format is not None and self._schema_supported
+        try:
+            content = self._complete(messages, _JSON_OBJECT if want_json else None)
+        except Exception:  # noqa: BLE001 — any rejection means "unsupported"
+            if not want_json:
+                raise
+            self._schema_supported = False
+            content = self._complete(messages, None)
+
         if isinstance(content, list):
             content = "".join(getattr(chunk, "text", "") or "" for chunk in content)
         return (content or "").strip()
+
+    def _complete(self, messages: list[dict], response_format: dict | None):
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            **self.params,
+        }
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        return self._client.chat.complete(**kwargs).choices[0].message.content
 
 
 class LocalJudge(Judge):
@@ -173,7 +202,14 @@ class LocalJudge(Judge):
           base_url: https://openrouter.ai/api
           model: deepseek/deepseek-chat
           # gated: true        # only for a real gated evaluator endpoint
+
+    Asks for schema-constrained output when the caller supplies a
+    `response_format`, which is what makes an 8B-class judge usable: the decoder
+    cannot emit a fence, a preamble, or a verdict outside the allowed set. A
+    backend that rejects it is detected once and the run continues unconstrained.
     """
+
+    supports_schema = True
 
     def __init__(
         self,
@@ -197,6 +233,9 @@ class LocalJudge(Judge):
         self.gated = gated
         self.params = params
         self._session = None  # lazily built; reused so TLS/TCP setup is paid once
+        # Flipped off permanently the first time the backend rejects a schema, so
+        # an unsupporting endpoint costs one failed request, not one per case.
+        self._schema_supported = True
 
     def _get_session(self):
         """A pooled `requests.Session`, built once per judge.
@@ -215,7 +254,21 @@ class LocalJudge(Judge):
             self._session = session
         return self._session
 
-    def _call(self, messages: list[dict]) -> str:
+    def _call(self, messages: list[dict], response_format: dict | None = None) -> str:
+        """POST one chat completion, degrading once if the schema is rejected.
+
+        Backends differ (vLLM, llama.cpp, Ollama, hosted APIs), so a rejection
+        must cost one request for the whole run rather than one per case — and
+        must never fail the run, since the prompt-only path still parses.
+        """
+        if response_format is not None and self._schema_supported:
+            try:
+                return self._post(messages, response_format)
+            except Exception:  # noqa: BLE001 — any rejection means "unsupported"
+                self._schema_supported = False
+        return self._post(messages, None)
+
+    def _post(self, messages: list[dict], response_format: dict | None) -> str:
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
@@ -228,6 +281,8 @@ class LocalJudge(Judge):
             "max_tokens": self.max_tokens,
             **self.params,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         # Accept bare host, /v1 root, or full endpoint without doubling the path.
         b = self.base_url
         url = (b if b.endswith("/chat/completions")
@@ -244,12 +299,14 @@ class LocalJudge(Judge):
         # a filter, or refuses — coerce so callers always get a string.
         return resp.json()["choices"][0]["message"].get("content") or ""
 
-    def evaluate(self, prompt: str) -> str:
-        return self._call([{"role": "user", "content": prompt}])
+    def evaluate(self, prompt: str, *, response_format: dict | None = None) -> str:
+        return self._call([{"role": "user", "content": prompt}], response_format)
 
-    def evaluate_messages(self, messages: list[dict]) -> str:
+    def evaluate_messages(
+        self, messages: list[dict], *, response_format: dict | None = None
+    ) -> str:
         """Send a pre-built message list directly to the evaluator."""
-        return self._call(messages)
+        return self._call(messages, response_format)
 
 
 class HuggingFaceJudge(Judge):

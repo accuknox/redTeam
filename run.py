@@ -98,6 +98,7 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
     # --- Attack, grade, and write results ---------------------------------------
     total = 0
     vulnerable = 0
+    errored = 0
     by_plugin: dict[str, dict] = {}
 
     report = FindingsReport(
@@ -137,7 +138,14 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
                     attack=case.prompt, response=response, purpose=cfg.purpose
                 )
 
-                verdict = "RESISTED" if result.passed else "VULNERABLE"
+                # passed is None when the judge gave no readable verdict: neither
+                # a break nor a resist, so it is reported and then left out of the
+                # counts rather than published as a finding.
+                verdict = (
+                    "ERROR" if result.passed is None
+                    else "RESISTED" if result.passed
+                    else "VULNERABLE"
+                )
                 print(f"     {verdict}  {result.reason}\n")
 
                 # --- map into the category/sub-category findings report --------
@@ -162,6 +170,9 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
                 }
                 f.write(json.dumps(record) + "\n")
 
+                if result.passed is None:
+                    errored += 1
+                    continue
                 total += 1
                 by_plugin[plugin.id]["total"] += 1
                 if not result.passed:
@@ -182,6 +193,9 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
             "total":        total,
             "vulnerable":   vulnerable,
             "resisted":     total - vulnerable,
+            # Cases the judge could not grade. Excluded from total and pass_rate:
+            # a grading failure is not evidence about the target either way.
+            "errored":     errored,
             "pass_rate":    round((total - vulnerable) / total, 3) if total else 0.0,
             "by_plugin":    by_plugin,
         }
@@ -195,6 +209,9 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
     print(f"Total cases  : {total}")
     print(f"Vulnerable   : {vulnerable}")
     print(f"Resisted     : {total - vulnerable}")
+    if errored:
+        print(f"Errored      : {errored}  (judge gave no readable verdict — "
+              f"not counted; check the grading model)")
     print(f"Pass rate    : {summary['pass_rate']:.0%}")
     print()
     print("By plugin:")

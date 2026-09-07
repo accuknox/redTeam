@@ -205,6 +205,9 @@ button{cursor:pointer}
 .reason-lbl{display:inline-block;font-size:9px;font-weight:700;letter-spacing:0.4px;padding:1px 6px;border-radius:4px;margin-right:6px;vertical-align:middle}
 .why-vuln .reason-lbl{background:var(--accent-dim);color:#FCA5A5}
 .why-safe .reason-lbl{background:var(--green-dim);color:#86EFAC}
+/* Ungraded: amber, matching .pill-err on the same row — not red, which reads
+   as a finding, and not green, which reads as a pass. */
+.why-err .reason-lbl{background:var(--surface2);color:#FBBF24}
 .reconf-tag{margin-top:4px;font-size:9px;font-weight:600;letter-spacing:0.3px;color:#86EFAC}
 .bar-wrap{background:var(--surface2);border-radius:3px;height:6px;min-width:80px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
@@ -1787,8 +1790,15 @@ function renderResults(data) {
             </tr>`;
             // Grader's reason for the verdict — full width so it isn't cramped
             // by the narrow verdict column.
-            const why = r.reason ? `<tr class="reason-row ${r.passed ? 'why-safe' : 'why-vuln'}"><td colspan="4">
-              <span class="reason-lbl">WHY ${r.passed ? 'RESISTED' : 'VULNERABLE'}</span> ${esc(r.reason)}</td></tr>` : '';
+            // passed === null means the judge returned no readable verdict. It is
+            // neither a pass nor a break, so it must not be labelled as either —
+            // printing "WHY VULNERABLE" under a row whose own pill says ERROR
+            // contradicts the pill and reads as a finding.
+            const ungraded = r.passed === null || r.error;
+            const whyCls = ungraded ? 'why-err' : (r.passed ? 'why-safe' : 'why-vuln');
+            const whyLbl = ungraded ? 'NOT GRADED' : (r.passed ? 'RESISTED' : 'VULNERABLE');
+            const why = r.reason ? `<tr class="reason-row ${whyCls}"><td colspan="4">
+              <span class="reason-lbl">WHY ${whyLbl}</span> ${esc(r.reason)}</td></tr>` : '';
             // Multi-turn cases get the full turn-by-turn expander. A single-turn
             // case is already fully shown in the main row (that one turn), so it
             // needs only the "broke on turn 1" tag above — no redundant expander.
@@ -1796,7 +1806,7 @@ function renderResults(data) {
               <details class="turns">
                 <summary>Show all ${turns} turns of the conversation</summary>
                 ${r.transcript.map(t => `<div class="turn">
-                  <div class="turn-h">Turn ${t.turn} — ${t.passed ? 'resisted' : 'COMPLIED'}${t.reconfirmed === false ? ' (break discounted on replay)' : ''}</div>
+                  <div class="turn-h">Turn ${t.turn} — ${t.passed === null ? 'not graded' : (t.passed ? 'resisted' : 'COMPLIED')}${t.reconfirmed === false ? ' (break discounted on replay)' : ''}</div>
                   <div class="turn-a"><span class="turn-lbl">ATTACK</span>${esc(t.attack || '')}</div>
                   <div class="turn-r"><span class="turn-lbl">REPLY</span>${esc(t.response || '')}</div>
                 </div>`).join('')}

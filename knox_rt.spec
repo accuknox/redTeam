@@ -38,6 +38,11 @@ a = Analysis(
         # ── Dynamically imported in config.py / cli.py ───────────────────────
         'plugins.custom',
         'detectors.custom',
+        # Imported inside functions (preflight judge check, --check-judge), so
+        # the static analysis cannot see them. Without these the shipped binary
+        # cannot score its own grading model.
+        'detectors.calibration',
+        'detectors.schema',
 
         # ── Plugin risk-domain modules (loaded via _CATEGORY_MODULES list) ───
         'plugins.prompt_integrity',
