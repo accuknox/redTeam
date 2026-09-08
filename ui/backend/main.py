@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -364,6 +365,62 @@ def scan_log(run_id: str):
     return {"lines": _runs[run_id]["output"]}
 
 
+# ── Routes — judge calibration ──────────────────────────────────────────────────
+# Score the configured grading model against the calibration corpus, so a UI user
+# can answer "is this judge trustworthy, and on which detectors" before believing
+# any verdict a scan produces. Wraps `knox-rt --check-judge -o <file>` — the same
+# code path and JSON the CLI produces — so the two stay in lockstep.
+
+class CheckJudgeRequest(BaseModel):
+    config: dict[str, Any]
+    samples: int = 1
+    concurrency: int = 3
+
+
+@app.post("/api/check-judge")
+async def check_judge(req: CheckJudgeRequest):
+    if not (req.config.get("grading")):
+        raise HTTPException(status_code=400,
+                            detail="config has no 'grading' block to score")
+
+    run_id = str(uuid.uuid4())
+    config_path = _TMP / f"knox_rt_judge_{run_id}.json"
+    out_path = _TMP / f"knox_rt_judge_{run_id}_report.json"
+    # A judge check never hits the target and never generates; a bare grading
+    # block is enough, but the loader is happy with the whole config too.
+    config_path.write_text(json.dumps(req.config, indent=2))
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-u", str(KNOX_RT_DIR / "cli.py"),
+            "--config", str(config_path),
+            "--check-judge",
+            "--samples", str(max(1, int(req.samples))),
+            "--concurrency", str(max(1, int(req.concurrency))),
+            "--output", str(out_path),
+            cwd=str(KNOX_RT_DIR),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, "PYTHONPATH": str(KNOX_RT_DIR)},
+        )
+        stdout, _ = await proc.communicate()
+        log = stdout.decode("utf-8", errors="replace")
+
+        if not out_path.exists():
+            # The corpus could not be scored — usually a bad grading block or the
+            # provider being unreachable. Hand back the log so the UI can show why.
+            raise HTTPException(status_code=500,
+                                detail=f"judge check produced no report:\n{log[-1500:]}")
+        report = json.loads(out_path.read_text())
+        # exit code 1 = the judge missed at least one case; that is a finding to
+        # display, not a server error, so it rides along in the payload.
+        report["_exit_code"] = proc.returncode
+        return report
+    finally:
+        config_path.unlink(missing_ok=True)
+        out_path.unlink(missing_ok=True)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -377,4 +434,17 @@ def run() -> None:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
+
+    # The reload=True worker is a fresh subprocess that imports "main:app" by
+    # name. It only inherits this process's environment, not its sys.path, so
+    # unless the directory holding main.py is on PYTHONPATH the worker fails with
+    # `Could not import module "main"` on every reload. Put it there explicitly
+    # so the launch works regardless of the caller's cwd.
+    _here = str(Path(__file__).resolve().parent)
+    if _here not in sys.path:
+        sys.path.insert(0, _here)
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        p for p in (_here, os.environ.get("PYTHONPATH", "")) if p
+    )
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True,
+                reload_dirs=[_here])

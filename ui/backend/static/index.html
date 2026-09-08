@@ -823,6 +823,7 @@ button{cursor:pointer}
 
     <div class="sidebar-footer">
       <button class="sidebar-run-btn" style="background:var(--surface1);color:var(--text-secondary);margin-bottom:8px;border:1px solid var(--border)" onclick="updateConfig()">🔄 Update Config</button>
+      <button class="sidebar-run-btn" id="check-judge-btn" style="background:var(--surface1);color:var(--text-secondary);margin-bottom:8px;border:1px solid var(--border)" onclick="checkJudge()" title="Score the grading model against unarguable test cases before trusting its verdicts">⚖ Check grading model</button>
       <button class="sidebar-run-btn" id="sidebar-run-btn" onclick="startScan()">Run Scan</button>
     </div>
   </aside>
@@ -832,6 +833,7 @@ button{cursor:pointer}
     <div class="tabs">
       <button class="tab active" onclick="switchTab('run',this)">Run</button>
       <button class="tab" onclick="switchTab('results',this)">Results</button>
+      <button class="tab" onclick="switchTab('judge',this)">Judge</button>
       <button class="tab" onclick="switchTab('config',this)">Config JSON</button>
     </div>
 
@@ -871,6 +873,23 @@ button{cursor:pointer}
         <div class="empty-state">
           <div class="icon">📊</div>
           <p>Results will appear here after a scan completes.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Judge tab -->
+    <div class="tab-panel" id="tab-judge">
+      <div id="judge-content">
+        <div class="empty-state">
+          <div class="icon">⚖</div>
+          <p>Score the grading model before trusting its verdicts.</p>
+          <p style="font-size:12px;color:var(--text-muted);max-width:520px;margin:8px auto 0">
+            Grades the configured judge against test cases whose correct verdict is
+            unarguable — a bare refusal is not a finding; a verbatim system-prompt dump
+            is. Read the <b>false positives</b> first: those are findings that would
+            reach a report without being real.
+          </p>
+          <button class="run-btn" style="margin-top:16px" onclick="checkJudge()">⚖ Check grading model</button>
         </div>
       </div>
     </div>
@@ -1609,6 +1628,84 @@ function updateConfig() {
 
 function copyConfig() {
   navigator.clipboard.writeText(document.getElementById('config-json').value);
+}
+
+// ── Judge calibration ──────────────────────────────────────────────────────────
+async function checkJudge() {
+  const cfg = buildConfig();
+  if (!cfg.grading) { alert("No grading model configured to check."); return; }
+  const btns = document.querySelectorAll('#check-judge-btn, #tab-judge .run-btn');
+  btns.forEach(b => { b.disabled = true; });
+  switchTab('judge', [...document.querySelectorAll('.tab')].find(t => t.textContent === 'Judge'));
+  document.getElementById('judge-content').innerHTML =
+    `<div class="empty-state"><div class="icon">⏳</div>
+     <p>Scoring <b>${esc((cfg.grading||{}).model || '?')}</b> against the calibration corpus…</p>
+     <p style="font-size:12px;color:var(--text-muted)">grading ~107 cases; this takes a minute.</p></div>`;
+  try {
+    const res = await fetch(`${API}/api/check-judge`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({config: cfg, samples: 1, concurrency: 3}),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+      throw new Error(detail);
+    }
+    renderJudge(await res.json());
+  } catch(e) {
+    document.getElementById('judge-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠</div>
+       <p>Could not score the grading model.</p>
+       <pre style="text-align:left;white-space:pre-wrap;font-size:11px;color:var(--text-muted);max-width:640px;margin:12px auto">${esc(e.message)}</pre></div>`;
+  } finally {
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
+
+function renderJudge(d) {
+  const s = d.summary || {};
+  const graded = s.cases || 0;
+  const acc = graded ? Math.round((s.accuracy||0)*100) : 0;
+  const trust = s.false_positives === 0 && s.false_negatives === 0;
+  const cards = [
+    `<div class="stat-card"><div class="num">${s.correct||0}/${graded}</div><div class="lbl">Correct</div></div>`,
+    `<div class="stat-card ${s.false_positives ? 'danger':''}"><div class="num">${s.false_positives||0}</div><div class="lbl">False positives<br><span style="font-size:9px">fabricated findings</span></div></div>`,
+    `<div class="stat-card ${s.false_negatives ? 'danger':''}"><div class="num">${s.false_negatives||0}</div><div class="lbl">False negatives<br><span style="font-size:9px">missed breaks</span></div></div>`,
+    s.wrong_reasoning ? `<div class="stat-card"><div class="num" style="color:#FBBF24">${s.wrong_reasoning}</div><div class="lbl">Wrong reasoning</div></div>` : '',
+    (s.unstable && Object.keys(s.unstable).length) ? `<div class="stat-card"><div class="num" style="color:#FBBF24">${Object.keys(s.unstable).length}</div><div class="lbl">Unstable</div></div>` : '',
+    `<div class="stat-card"><div class="num">${acc}%</div><div class="lbl">Accuracy</div></div>`,
+  ].join('');
+
+  const weak = Object.entries(s.by_detector||{})
+    .filter(([,v]) => v.correct < v.total)
+    .map(([k]) => k).sort();
+
+  const banner = trust
+    ? `<div class="reason-row why-safe" style="padding:10px;border-radius:8px;margin:8px 0"><span class="reason-lbl">TRUSTWORTHY</span> ${esc((d.grading_model)||'')} made no fabricated findings and missed no breaks on the corpus.</div>`
+    : `<div class="reason-row why-vuln" style="padding:10px;border-radius:8px;margin:8px 0"><span class="reason-lbl">USE WITH CARE</span> ${esc((d.grading_model)||'')} was wrong on ${(s.false_positives||0)+(s.false_negatives||0)} case(s). Findings on the weak detectors below may not be reliable.</div>`;
+
+  const misses = (d.cases||[]).filter(c => !c.correct);
+  const missRows = misses.map(c => {
+    const cls = c.failure_mode === 'false_positive' ? 'why-vuln'
+      : c.failure_mode === 'false_negative' ? 'why-vuln' : 'why-err';
+    return `<tr class="reason-row ${cls}"><td colspan="3" style="padding:8px 10px">
+      <span class="reason-lbl">${esc((c.failure_mode||'').replace(/_/g,' ').toUpperCase())}</span>
+      <b>${esc(c.id)}</b> <span style="color:var(--text-muted)">[${esc(c.detector_id)}]</span>${c.samples ? ` · ${esc(c.samples)} samples` : ''}
+      <div style="margin-top:4px;font-size:11px">why this is unarguable: ${esc(c.why||'')}</div>
+      <div style="margin-top:2px;font-size:11px;color:var(--text-muted)">judge said: ${esc(c.judge_reason||'')}</div>
+    </td></tr>`;
+  }).join('');
+
+  document.getElementById('judge-content').innerHTML = `
+    <div class="results-toolbar"><button class="copy-btn" onclick="checkJudge()">↻ Re-run</button></div>
+    <h3 style="margin:4px 0">Grading model: ${esc(d.grading_model||'?')}</h3>
+    ${banner}
+    <div class="results-grid">${cards}</div>
+    ${weak.length ? `<p style="margin:14px 0 6px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px">Detectors with at least one miss</p>
+      <p style="font-family:var(--mono);font-size:12px">${weak.map(esc).join(', ')}</p>` : ''}
+    ${misses.length ? `<h3 style="margin:16px 0 6px">Misses (${misses.length})</h3>
+      <table class="plugin-table"><tbody>${missRows}</tbody></table>` : `<p style="margin-top:16px;color:#86EFAC">Every case graded correctly.</p>`}
+  `;
 }
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
