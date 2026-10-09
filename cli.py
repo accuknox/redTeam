@@ -35,6 +35,10 @@ from plugins import (
     builtin_dataset_path, category_for_plugin, get_plugin, has_builtin_dataset,
     resolve_plugin_ids,
 )
+from strategies.encoding import encoded_original
+from strategies.conversational import (
+    INJECTION_FAMILY_IDS, INJECTION_PROOF_PROBE, turn_instructions,
+)
 from strategies import (
     _REGISTRY as _STRATEGY_REGISTRY,
     get_strategy,
@@ -390,24 +394,98 @@ def _save_prompts(path: Path, purpose: str, strategy_ids: list[str], cases: list
     return path
 
 
+_PING = "Reply with the single word OK."
+
+
+def _preflight_models(cfg, *, need_target: bool) -> list[str]:
+    """One tiny call to every model the run will use; returns what failed.
+
+    A wrong key, URL or unsupported setting otherwise shows up only when the
+    first case is sent, after every prompt and variant has been built.
+    """
+    strategies = [*cfg.strategies,
+                  *(s for p in cfg.plugins for s in (getattr(p, "strategies", None) or []))]
+    needs_generator = cfg.generation is not None and (
+        cfg.generate or any(s.uses_llm or s.interactive for s in strategies)
+        or any(hasattr(p, "generator") for p in cfg.plugins))
+
+    checks: list[tuple] = []
+    if need_target:
+        checks += [(f"target '{t.name}'", lambda t=t: t.generate(_PING)) for t in cfg.targets]
+    if needs_generator:
+        checks.append((f"generation model '{cfg.generation.name}'",
+                       lambda: cfg.generation.complete(_PING)))
+    if cfg.grading is not None and not getattr(cfg.grading, "gated", False):
+        checks.append((f"grading model '{cfg.grading.name}'",
+                       lambda: cfg.grading.evaluate(_PING)))
+
+    failures: list[str] = []
+    for label, call in checks:
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001 — any failure here blocks the run
+            failures.append(f"{label}: {type(exc).__name__}: {str(exc)[:300]}")
+    return failures
+
+
+def _prompt_key(text: str) -> str:
+    """Identity of a prompt for de-duplication: case and whitespace folded."""
+    return " ".join((text or "").split()).lower()
+
+
+def _unique_cases(cases: list, seen: set | None = None) -> list:
+    """`cases` minus repeats of each other and of anything already in `seen`."""
+    seen = set() if seen is None else seen
+    out = []
+    for tc in cases:
+        key = _prompt_key(tc.prompt)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(tc)
+    return out
+
+
+def _generate_unique(plugin, want: int, seen: set) -> list:
+    """Up to `want` new cases from `plugin`, none repeating a prompt in `seen`."""
+    orig = plugin.num_tests
+    fresh: list = []
+    try:
+        rows = getattr(plugin, "_rows", None)
+        if rows is not None:
+            # Seed/dataset plugin: take every row, keep the unseen ones, then
+            # sample as the plugin itself would.
+            plugin.num_tests = len(rows)
+            pool = _unique_cases(plugin.generate_tests(), seen)
+            if getattr(plugin, "sample", False) and len(pool) > want:
+                pool = plugin._rng.sample(pool, want)
+            fresh = pool[:want]
+        else:
+            # LLM plugin: a repeat is unlikely but possible. Ask for exactly
+            # what is needed; if repeats cost some, retry once with two spares.
+            for spare in (0, 2):
+                if len(fresh) >= want:
+                    break
+                plugin.num_tests = want - len(fresh) + spare
+                fresh += _unique_cases(plugin.generate_tests(), seen)
+            fresh = fresh[:want]
+    finally:
+        plugin.num_tests = orig
+    return fresh
+
+
 def _run_plugin_with_topup(plugin, file_base: list) -> tuple:
     t0 = time.perf_counter()
-    # The config decides how many cases run, in both directions. Topping up a
-    # short file was already handled; a file holding *more* than `num_tests` used
-    # to run in full, so asking for 6 against a 10-prompt file quietly bought 10
-    # targets calls and 10 grading calls. Trim first, then top up what is left.
-    file_base = file_base[: plugin.num_tests]
+    # The config decides how many cases run, in both directions: trim a file
+    # holding more than `num_tests`, top up one holding fewer. No prompt may
+    # appear twice, whether it came from the file or from the top-up.
+    seen: set = set()
+    file_base = _unique_cases(file_base, seen)[: plugin.num_tests]
+    seen = {_prompt_key(tc.prompt) for tc in file_base}
     shortfall = max(0, plugin.num_tests - len(file_base))
-    if shortfall > 0:
-        orig = plugin.num_tests
-        plugin.num_tests = shortfall
-        try:
-            new_cases = plugin.generate_tests()
-        finally:
-            plugin.num_tests = orig
-    else:
-        new_cases = []
-    return plugin, file_base + new_cases, round(time.perf_counter() - t0, 2)
+    generated = bool(shortfall)
+    new_cases = _generate_unique(plugin, shortfall, seen) if shortfall else []
+    elapsed = max(round(time.perf_counter() - t0, 2), 0.01) if generated else 0
+    return plugin, file_base + new_cases, elapsed
 
 
 def _strategy_variant(case, strategy, generator, amplifier=None):
@@ -607,6 +685,21 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Save prompts    : {save_prompts_path}")
     print()
 
+    # --- preflight: can every model be reached? -------------------------------
+    # Fatal, and before generation: a run that cannot reach its target would
+    # otherwise build every prompt and then record an error for each case.
+    if cfg.preflight:
+        print("Checking connections…", end=" ", flush=True)
+        failures = _preflight_models(cfg, need_target=not args.generate_only)
+        if failures:
+            print("FAILED")
+            print("✗ Preflight failed — nothing was generated and no attack was sent:")
+            for f in failures:
+                print(f"  - {f}")
+            print("Fix the config and run again (set `preflight: false` to skip this check).")
+            raise SystemExit(2)
+        print("ok")
+
     # --- preflight: warn on self-judging -------------------------------------
     # A grader that is the same model as the target shares the target's blind
     # spots; a grader that is the same model as the attacker judges attacks it
@@ -681,7 +774,9 @@ def main(argv: list[str] | None = None) -> None:
             src = "cached" if not gen_t else f"{gen_t:.1f}s"
             plugin_strats = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
             strat_info = f" + {len(plugin_strats)} strategy(ies)" if plugin_strats else ""
-            print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}")
+            short = (f"  — only {len(cases)} unique prompt(s) available, {plugin.num_tests} asked"
+                     if len(cases) < plugin.num_tests else "")
+            print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}{short}")
     else:
         with ThreadPoolExecutor(max_workers=cfg.concurrency) as pool:
             futures = {
@@ -698,14 +793,16 @@ def main(argv: list[str] | None = None) -> None:
                 src = "cached" if not gen_t else f"{gen_t:.1f}s"
                 plugin_strats = plugin.strategies if hasattr(plugin, 'strategies') and plugin.strategies else cfg.strategies
                 strat_info = f" + {len(plugin_strats)} strategy(ies)" if plugin_strats else ""
-                print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}")
+                short = (f"  — only {len(cases)} unique prompt(s) available, {plugin.num_tests} asked"
+                         if len(cases) < plugin.num_tests else "")
+                print(f"  {plugin.id:<40} {len(cases)} prompt(s)  [{src}]{strat_info}{short}")
     print(f"\n[timing] generation: {time.perf_counter() - run_start:.1f}s\n")
 
     # --- build final case lists (apply only strategies missing from file) -----
     # For each plugin:
     #   file_strat  = strategy variants already saved in the file
-    #   done        = strategy ids already represented in the file
-    #   missing     = config strategies not yet in the file → apply fresh
+    #   covered     = per strategy, the base prompts that already have a variant
+    #   todo        = base prompts still lacking that strategy → apply fresh
     #   final_cases = base + file_strat + newly applied variants  (union)
     all_save_cases: list = []
     final_batches: list[tuple] = []   # (plugin, base_cases, final_cases)
@@ -732,6 +829,11 @@ def main(argv: list[str] | None = None) -> None:
         configured = {s.id for s in plugin_strategies}
         kept_base = {tc.prompt for tc in base_cases}
         file_strat = []
+        # Coverage is per prompt: a strategy cached for six prompts still has to
+        # be applied to a seventh that the top-up added.
+        covered: dict[str, set] = {}
+        unlinked: set = set()   # strategies with variants that cannot be aligned
+        seen_variants: set = set()
         for tc in file_cases.get(plugin.id, []):
             sid = tc.metadata.get("strategy")
             if not sid:
@@ -745,8 +847,16 @@ def main(argv: list[str] | None = None) -> None:
             if origin is not None and origin not in kept_base:
                 dropped_orphans[plugin.id] = dropped_orphans.get(plugin.id, 0) + 1
                 continue
+            # The same variant saved twice is one variant.
+            dup_key = (sid, _prompt_key(origin) if origin is not None else _prompt_key(tc.prompt))
+            if dup_key in seen_variants:
+                continue
+            seen_variants.add(dup_key)
             file_strat.append(tc)
-        done = {tc.metadata["strategy"] for tc in file_strat}
+            if origin is None:
+                unlinked.add(sid)
+            else:
+                covered.setdefault(sid, set()).add(origin)
 
         # The amplifier wraps each framing rather than running beside it; the
         # slot count is unchanged either way. Same planner as run.py, so the two
@@ -759,19 +869,24 @@ def main(argv: list[str] | None = None) -> None:
         # cache of literal prompts, so a strategy present in the file is a hit
         # whether or not it was amplified when it was written. Composition
         # applies to prompts being built, never to prompts being replayed.
-        missing = [s for s in to_apply if s.id not in done]
-
         slots: list[list] = []
-        for s_i, strat in enumerate(missing):
+        for strat in to_apply:
+            if strat.id in unlinked:
+                continue
+            have = covered.get(strat.id, set())
+            todo = [case for case in base_cases if case.prompt not in have]
+            if not todo:
+                continue
+            s_i = len(slots)
             if strat.uses_llm:
-                slots.append([None] * len(base_cases))
+                slots.append([None] * len(todo))
                 llm_units.extend(
                     (p_i, s_i, c_i, case, strat, amplifier)
-                    for c_i, case in enumerate(base_cases)
+                    for c_i, case in enumerate(todo)
                 )
             else:
                 slots.append(strat.apply_to_cases(
-                    base_cases, generator=cfg.generation, amplifier=amplifier))
+                    todo, generator=cfg.generation, amplifier=amplifier))
         plan.append((plugin, base_cases, file_strat, slots))
 
     if dropped_strategies:
@@ -953,8 +1068,12 @@ def main(argv: list[str] | None = None) -> None:
                         # same contract the seed prompt was generated under.
                         language=case.metadata.get("language") or "",
                         max_chars=case.metadata.get("max_chars") or 0,
-                        instructions=case.metadata.get("generation_instructions") or "",
+                        instructions=turn_instructions(
+                            case.detector_id,
+                            case.metadata.get("generation_instructions") or ""),
                         examples=case.metadata.get("examples") or "",
+                        proof_probe=(INJECTION_PROOF_PROBE
+                                     if case.detector_id in INJECTION_FAMILY_IDS else ""),
                     ),
                 )
                 elapsed = time.perf_counter() - t0
@@ -983,7 +1102,7 @@ def main(argv: list[str] | None = None) -> None:
                     None,
                     lambda: detector.grade(
                         attack=case.prompt, response=response, purpose=cfg.purpose,
-                        objective=objective),
+                        objective=objective, original=encoded_original(case)),
                 )
                 t_grade = time.perf_counter() - t1
 
@@ -1052,6 +1171,10 @@ def main(argv: list[str] | None = None) -> None:
                 "t_grade":   t_grade,
             }
 
+    def _err_suffix(res):
+        err = res.get("error")
+        return f"  ({' '.join(str(err).split())[:200]})" if err else ""
+
     async def _evaluate_all(units, concurrency):
         """Run every case from every plugin in one pool.
 
@@ -1080,7 +1203,8 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             tgt_col = f"{res['target']:<18} " if is_multi else ""
             print(f"  [{done_n}/{n_total}] {res['plugin_id']:<34} "
-                  f"{res['sev_tag']}{res['strat_tag']}{tgt_col}{res['verdict']}", flush=True)
+                  f"{res['sev_tag']}{res['strat_tag']}{tgt_col}{res['verdict']}"
+                  f"{_err_suffix(res)}", flush=True)
             out.append(res)
         pool.shutdown(wait=False)
         return out

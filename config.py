@@ -84,7 +84,9 @@ def build_generator(spec: dict[str, Any]) -> Generator:
     """
     spec = dict(spec)
     backend = spec.pop("backend", "anthropic")
-    model = spec.pop("model")
+    model = spec.pop("model", None)
+    if not model:
+        raise ValueError("'generation' block needs a 'model' (e.g. \"model\": \"mistral-large-2512\")")
     if backend == "anthropic":
         return AnthropicGenerator(model, **spec)
     if backend == "mistral":
@@ -180,7 +182,9 @@ def build_judge(spec: dict[str, Any]) -> Judge:
     """
     spec = dict(spec)
     backend = spec.pop("backend", "anthropic")
-    model = spec.pop("model")
+    model = spec.pop("model", None)
+    if not model:
+        raise ValueError("'grading' block needs a 'model' (e.g. \"model\": \"mistral-large-2512\")")
     if backend == "anthropic":
         return AnthropicJudge(model, **spec)
     if backend == "mistral":
@@ -189,13 +193,18 @@ def build_judge(spec: dict[str, Any]) -> Judge:
         return BedrockJudge(model, **spec)
     if backend == "huggingface":
         return HuggingFaceJudge(model, **spec)
-    if backend == "local" or backend == "custom":
+    if backend in ("local", "custom", "openai"):
         url = spec.pop("url", None) or spec.pop("base_url", None)
+        # `openai` is the hosted endpoint, so it has a default; local/custom
+        # must say where to point.
+        if not url and backend == "openai":
+            url = "https://api.openai.com"
         if not url:
             raise ValueError(f"{backend} judge requires a 'url' or 'base_url' key")
         return LocalJudge(base_url=url, model=model, **spec)
     raise ValueError(
-        f"unknown judge backend {backend!r} (expected anthropic | mistral | bedrock | huggingface | local | custom)"
+        f"unknown judge backend {backend!r} "
+        "(expected anthropic | mistral | bedrock | huggingface | openai | local | custom)"
     )
 
 
@@ -221,6 +230,9 @@ class RedTeamConfig:
     # turns a whole run into fabricated findings or silent misses, and costs four
     # calls to catch. Set `check_judge: false` to skip it.
     check_judge: bool = True
+    # Send one tiny request to the target, generation and grading models before
+    # anything is generated, and stop on the first failure. Set false to skip.
+    preflight: bool = True
     # Wrap every selected strategy in the amplifier (refusal-suppression) as an
     # outer layer. Applied whether or not the amplifier is itself listed, and
     # the number of variants per case is unchanged either way — see
@@ -311,13 +323,19 @@ def load_config(
     def _build_plugin(
         pid: str, *, num_tests: int, severity: str, examples: str,
         instructions: str, language: str, max_chars: int, strategies: list,
+        generate: bool | None = None,
     ) -> "RedteamPlugin | DatasetPlugin":
         """Build one built-in plugin: LLM-generated, or seeded from its dataset.
 
         Falls back to LLM generation when generation is on, or when the plugin
-        has no shipped seed file (e.g. a newly added plugin).
+        has no shipped seed file (e.g. a newly added plugin). A per-plugin
+        `generate` overrides the run-wide setting for that plugin only.
         """
-        if not do_generate and has_builtin_dataset(pid):
+        use_generation = do_generate if generate is None else generate
+        if use_generation and generation is None:
+            raise ValueError(
+                f"plugin {pid!r} has generate: true but the config has no 'generation' block")
+        if not use_generation and has_builtin_dataset(pid):
             return DatasetPlugin(
                 dataset_path=builtin_dataset_path(pid),
                 detector_id=pid,
@@ -434,7 +452,9 @@ def load_config(
                                           instructions=per_instr,
                                           language=per_lang,
                                           max_chars=per_max_chars,
-                                          strategies=per_strats)
+                                          strategies=per_strats,
+                                          generate=(bool(entry["generate"])
+                                                    if "generate" in entry else None))
                         )
 
         elif isinstance(entry, dict) and "dataset" in entry:
@@ -500,6 +520,7 @@ def load_config(
         load_prompts=data.get("load_prompts") or None,
         generate=do_generate,
         check_judge=bool(data.get("check_judge", True)),
+        preflight=bool(data.get("preflight", True)),
         compose_strategies=bool(data.get("compose_strategies", True)),
         calibration=data.get("calibration"),
     )

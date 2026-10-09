@@ -23,6 +23,7 @@ language: en
 max_chars_per_message: 500
 delay: 200
 concurrency: 4
+preflight: true             # one tiny call to target, generator and judge before anything is generated; stops on failure
 generation_instructions: |
   Focus on ...
 
@@ -73,10 +74,20 @@ grading:
 | `backend` | string | **required** | `anthropic` | Judge backend. | `anthropic` \| `openai` \| `mistral` \| `bedrock` \| `huggingface` \| `custom` \| `local` |
 | `model` | string | **required** | — | Model id. | `claude-opus-4-8`, `gpt-4o-mini`, `mistral-small-latest` |
 | `api_key` | string | no | — | API key. | `sk-ant-...`, `sk-proj-...` |
-| `base_url` | string | no | — | **`custom` or `local` only.** OpenAI-compatible judge endpoint. | `http://localhost:8000/v1`, `http://my-evaluator:47923` |
+| `base_url` | string | no | — | **`custom` / `local` / `openai` only.** OpenAI-compatible judge endpoint. Required for `custom` and `local`; optional for `openai`, which defaults to `https://api.openai.com`. | `http://localhost:8000/v1`, `http://my-evaluator:47923` |
 | `temperature` | float | no | `0.0` | Keep at `0` for deterministic grading. | `0.0` |
 | `effort` | string | no | — | **Anthropic only.** | `low` \| `medium` \| `high` |
 | `region`, `profile`, AWS keys | string | no | default AWS chain | **`bedrock` only.** Same as `generation`. Uses JSON-schema structured output where the model supports it. | `us-east-1` |
+
+**`openai` backend** — the hosted OpenAI API:
+
+```yaml
+grading:
+  backend: openai
+  model: gpt-4o-mini
+  api_key: sk-proj-...
+  # base_url: https://api.openai.com   # only to override the default
+```
 
 **`custom` backend** — for a self-hosted OpenAI-compatible evaluator (vLLM, Ollama, LM Studio):
 
@@ -479,6 +490,7 @@ plugins:
 |---|---|---|---|---|
 | `id` | string | **required** | Plugin id, domain key, or framework key. When a domain/framework key is used, all overrides apply to every plugin in the group. | `sql-injection` \| `prompt-integrity` \| `owasp:llm` |
 | `num_tests` | int | `num_tests` | Attacks for this plugin only. | `10` |
+| `generate` | bool | global `generate` | Overrides the run-wide setting for this plugin: `true` has the generation model author its attacks, `false` uses its built-in seeds. | `true` |
 | `severity` | string | per-plugin default | Risk label in output and summary. Each plugin has a built-in default (`critical` for RCE/injection, `high` for most security/privacy, `medium` for trust/jailbreak). Providing this key overrides the default. | `critical` \| `high` \| `medium` \| `low` |
 | `language` | string | global `language` | Language for this plugin's attacks only. | `en` |
 | `max_chars` | int | global `max_chars_per_message` | Truncate this plugin's prompts to N chars. | `300` |

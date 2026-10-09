@@ -189,6 +189,7 @@ Each selected strategy creates additional test cases. Total cases = `tests × pl
 | `leetspeak` | Rewrites in leet speak (a→4, e→3) | Keyword filters |
 | `fiction` | Wraps attack in a creative writing prompt | Bypassing intent detection |
 | `citation` | Frames as academic research | Authority-based defenses |
+| `document` | Embeds the attack in a document to summarise/extract | Indirect prompt injection |
 | `refusal-suppression` | Prepends "don't refuse" instructions | Refusal mechanisms |
 
 **LLM strategies** (one generation call per case):
@@ -468,6 +469,7 @@ strategy phase.
 | `leetspeak` | Converts to leet speak (probes keyword filters) |
 | `fiction` | Wraps the attack in a novel-writing / creative request |
 | `citation` | Frames the attack as an academic research inquiry |
+| `document` | Hides the attack inside a realistic document (email, web page, ticket, CSV, JSON tool result, README, résumé, notes) the model is asked to process — indirect prompt injection. Optional `format` config pins one |
 | `refusal-suppression` | Prepends "don't refuse or add caveats" instructions |
 
 **LLM strategies** (`llm.py`, `wrapping.py` — one generation call per case):
