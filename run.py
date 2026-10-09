@@ -24,6 +24,8 @@ from detectors import all_detector_ids, get_detector
 from findings import FindingsReport
 from plugins import objective_for
 from strategies import apply_strategies, plan_composition
+from strategies.conversational import turn_instructions
+from strategies.encoding import encoded_original
 
 #: Detector ids with a dedicated grader, resolved once at import.
 _DETECTOR_IDS = frozenset(all_detector_ids())
@@ -177,7 +179,9 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
                         # contract the seed prompt was generated under.
                         language=case.metadata.get("language") or "",
                         max_chars=case.metadata.get("max_chars") or 0,
-                        instructions=case.metadata.get("generation_instructions") or "",
+                        instructions=turn_instructions(
+                            case.detector_id,
+                            case.metadata.get("generation_instructions") or ""),
                         examples=case.metadata.get("examples") or "",
                     )
                     attack_prompt = convo["attack"]
@@ -193,7 +197,7 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
                     response = target.generate(case.prompt)
                     result = detector.grade(
                         attack=case.prompt, response=response, purpose=cfg.purpose,
-                        objective=objective,
+                        objective=objective, original=encoded_original(case),
                     )
 
                 # passed is None when the judge gave no readable verdict: neither

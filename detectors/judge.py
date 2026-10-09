@@ -335,7 +335,7 @@ class LocalJudge(Judge):
         api_key: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 1024,
-        timeout: int = 30,
+        timeout: int = 180,
         gated: bool = False,
         **params: Any,
     ) -> None:

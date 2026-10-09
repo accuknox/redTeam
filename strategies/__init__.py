@@ -23,8 +23,10 @@ Config-driven (config.yaml `strategies:` key)::
 
 Available strategies
 --------------------
-No-LLM  : base64, rot13, leetspeak  (strategies/encoding.py)
-          fiction, citation, refusal-suppression  (strategies/wrapping.py)
+No-LLM  : base64, rot13, leetspeak, hex, homoglyph, spaced-char  (strategies/encoding.py)
+          fiction, citation, document, refusal-suppression  (strategies/wrapping.py)
+          dan-wrap, continuation-wrap, grandma-wrap — jailbreak frames
+          (strategies/wrapping.py)
 LLM     : jailbreak, multilingual  (strategies/llm.py)
           manyshot — generates on-domain compliance shots  (strategies/wrapping.py)
 Adaptive: conversational-jailbreak, crescendo — multi-turn, need the target
@@ -39,10 +41,17 @@ if TYPE_CHECKING:
     from plugins.base import TestCase
 
 from strategies.base import Strategy
-from strategies.encoding import Base64Strategy, Rot13Strategy, LeetspeakStrategy
+from strategies.encoding import (
+    Base64Strategy, Rot13Strategy, LeetspeakStrategy,
+    HexStrategy, HomoglyphStrategy, SpacedCharStrategy,
+)
 from strategies.wrapping import (
     FictionStrategy,
     CitationStrategy,
+    DocumentStrategy,
+    DanWrapStrategy,
+    ContinuationWrapStrategy,
+    GrandmaWrapStrategy,
     RefusalSuppressionStrategy,
     ManyshotStrategy,
 )
@@ -58,8 +67,15 @@ _REGISTRY: dict[str, type[Strategy]] = {
         Base64Strategy,
         Rot13Strategy,
         LeetspeakStrategy,
+        HexStrategy,
+        HomoglyphStrategy,
+        SpacedCharStrategy,
         FictionStrategy,
         CitationStrategy,
+        DocumentStrategy,
+        DanWrapStrategy,
+        ContinuationWrapStrategy,
+        GrandmaWrapStrategy,
         RefusalSuppressionStrategy,
         ManyshotStrategy,
         CrescendoStrategy,
@@ -188,8 +204,12 @@ __all__ = [
     "Base64Strategy",
     "Rot13Strategy",
     "LeetspeakStrategy",
+    "HexStrategy",
+    "HomoglyphStrategy",
+    "SpacedCharStrategy",
     "FictionStrategy",
     "CitationStrategy",
+    "DocumentStrategy",
     "RefusalSuppressionStrategy",
     "ManyshotStrategy",
     "CrescendoStrategy",
