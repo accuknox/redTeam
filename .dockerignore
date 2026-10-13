@@ -1,0 +1,27 @@
+.git
+.github
+.vscode
+.idea
+
+# Virtual environments
+.venv
+venv
+myenv
+env
+ui/backend/.venv
+
+# Build / cache output
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+
+# Secrets
+.env
+.env.*
+*.env
+
+# Scan output
+results*.json
+results*.jsonl

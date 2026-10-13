@@ -31,3 +31,6 @@ build/
 .idea/
 *.swp
 
+CLAUDE.md
+.agent/
+
