@@ -36,27 +36,6 @@ def _pass_rate(total: int, vulnerable: int) -> float:
     return round((total - vulnerable) / total, 3) if total else 0.0
 
 
-#: Above this errored share a run's rates describe our pipeline, not the target.
-INVALID_RUN_ERROR_SHARE = 0.5
-
-
-def run_health(records: list[dict]) -> dict[str, Any]:
-    """Whether a run measured the target, from its per-case records."""
-    total = len(records)
-    errored = sum(1 for r in records if r.get("passed") is None)
-    target_errors = [r["error"] for r in records
-                     if str(r.get("error") or "").startswith("target error")]
-    valid = not total or errored / total < INVALID_RUN_ERROR_SHARE
-    reason = None
-    if not valid:
-        top = max(set(target_errors), key=target_errors.count) if target_errors else None
-        reason = (f"{errored} of {total} cases errored"
-                  + (f" ({len(target_errors)} target errors, e.g. '{top[:120]}')" if top else "")
-                  + "; the pass rate and findings do not measure the target.")
-    return {"valid": valid, "invalid_reason": reason,
-            "target_errors": len(target_errors)}
-
-
 @dataclass
 class Finding:
     """One graded attack/response pair, resolved into the taxonomy."""

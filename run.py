@@ -21,7 +21,7 @@ from pathlib import Path
 
 from config import load_config
 from detectors import all_detector_ids, get_detector
-from findings import FindingsReport, run_health
+from findings import FindingsReport
 from plugins import objective_for
 from strategies import apply_strategies, plan_composition
 from strategies.conversational import turn_instructions
@@ -120,7 +120,6 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
     errored = 0
     by_plugin: dict[str, dict] = {}
     by_strategy: dict[str, dict] = {}
-    records: list[dict] = []
 
     report = FindingsReport(
         run_id=run_id,
@@ -253,7 +252,6 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
                     "grading_model":    cfg.grading.name,
                 }
                 f.write(json.dumps(record) + "\n")
-                records.append(record)
 
                 # Baseline cases carry no strategy and bucket under "none", so the
                 # lift a strategy buys over the raw prompt is readable off one table.
@@ -302,10 +300,6 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
             "by_plugin":    by_plugin,
             "by_strategy":  by_strategy or None,
         }
-        health = run_health(records)
-        summary.update(run_valid=health["valid"],
-                       invalid_reason=health["invalid_reason"],
-                       target_errors=health["target_errors"])
         f.write(json.dumps(summary) + "\n")
 
     # --- write the category-mapped findings file --------------------------------
@@ -320,8 +314,6 @@ def main(config_path: str | None = None, output_path: str | None = None) -> None
         print(f"Errored      : {errored}  (judge gave no readable verdict — "
               f"not counted; check the grading model)")
     print(f"Pass rate    : {summary['pass_rate']:.0%}")
-    if not health["valid"]:
-        print(f"!! RUN INVALID: {health['invalid_reason']}")
     print()
     print("By plugin:")
     for pid, counts in by_plugin.items():

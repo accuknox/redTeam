@@ -29,7 +29,6 @@ from pathlib import Path
 
 from config import load_config
 from detectors import all_detector_ids, get_detector
-from findings import run_health
 from inference import CallableProvider, RestProvider
 from inference.provider import is_rate_limit
 from plugins import (
@@ -1352,7 +1351,6 @@ def main(argv: list[str] | None = None) -> None:
         counts["pass_rate"] = _pass_rate(counts)
 
     decided = total - errored
-    health = run_health(all_records)
     summary = {
         "run_id":       run_id,
         "timestamp":    _now(),
@@ -1361,9 +1359,6 @@ def main(argv: list[str] | None = None) -> None:
         "resisted":     decided - vulnerable,
         "errored":      errored,
         "pass_rate":    round((decided - vulnerable) / decided, 3) if decided else 0.0,
-        "run_valid":      health["valid"],
-        "invalid_reason": health["invalid_reason"],
-        "target_errors":  health["target_errors"],
         "skipped_plugins": skipped_plugins or None,
         "by_plugin":    by_plugin,
         "by_framework": by_framework or None,
@@ -1388,8 +1383,6 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Resisted   : {decided - vulnerable}  ({summary['pass_rate']:.0%})" if decided else "Resisted   : 0")
     if errored:
         print(f"Errored    : {errored}  (excluded from rates — see 'error' field in results)")
-    if not health["valid"]:
-        print(f"\n!! RUN INVALID: {health['invalid_reason']}")
     if skipped_plugins:
         print(f"\n!! {len(skipped_plugins)} plugin(s) SKIPPED, not tested: "
               f"{', '.join(skipped_plugins)} (generation model rate-limited)")

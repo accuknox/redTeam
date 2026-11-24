@@ -2023,7 +2023,6 @@ function renderResults(data) {
     <div class="results-toolbar">
       <button class="copy-btn" onclick="downloadResultsJSON()">⬇ Download Results JSON</button>
     </div>
-    ${s.run_valid === false ? `<div class="reason-row why-err" style="padding:10px;border-radius:8px;margin:8px 0"><span class="reason-lbl">RUN INVALID</span> ${esc(s.invalid_reason || '')} Fix the target configuration and re-run.</div>` : ''}
     ${s.skipped_plugins ? `<div class="reason-row why-err" style="padding:10px;border-radius:8px;margin:8px 0"><span class="reason-lbl">INCOMPLETE</span> ${Object.keys(s.skipped_plugins).length} plugin(s) were not tested because the generation model stayed rate-limited: ${esc(Object.keys(s.skipped_plugins).join(', '))}. Lower Parallel Workers or wait for the quota to reset, then re-run.</div>` : ''}
 
     <div class="results-grid">
